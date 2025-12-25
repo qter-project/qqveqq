@@ -35,6 +35,13 @@ pub fn maximum_matching(costs: &[&[Option<f64>]]) -> Option<Vec<usize>> {
     // Each value is a tuple of `(left potential, right potential, left matches to, right matches to, bfs depth)`
     let mut data: Box<[_]> = Box::from(vec![Element::default(); costs.len()]);
 
+    // We need the reduced cost to be >=0 and we can make that happen in the case of negative costs by setting all of the potentials on the left to the min cost.
+    let min_cost = costs.iter().flat_map(|v| v.iter()).filter_map(|v| *v).min_by(|a, b| a.total_cmp(b)).unwrap();
+
+    for elt in &mut data {
+        elt.left.potential = min_cost;
+    }
+
     while let Some((i, _)) = data
         .iter()
         .enumerate()
@@ -196,5 +203,17 @@ mod tests {
             &[Some(6.), Some(2.), Some(3.)],
             &[Some(9.), Some(4.), Some(8.)],
         ]), Some(vec![1, 2, 0]));
+
+        assert_eq!(maximum_matching(&[
+            &[None, Some(4.), Some(7.)],
+            &[None, Some(2.), Some(3.)],
+            &[None, Some(4.), Some(8.)],
+        ]), None);
+
+        assert_eq!(maximum_matching(&[
+            &[Some(-100.), Some(-110.), Some(-90.)],
+            &[Some(-95.), Some(-130.), Some(-75.)],
+            &[Some(-95.), Some(-140.), Some(-65.)],
+        ]), Some(vec![2, 0, 1]));
     }
 }
