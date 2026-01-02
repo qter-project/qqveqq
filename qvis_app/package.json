@@ -1,0 +1,18 @@
+{
+  "name": "qvis_app",
+  "version": "0.1.0",
+  "description": "Cube Vision App",
+  "homepage": "https://github.com/qter-project/qvis#readme",
+  "bugs": {
+    "url": "https://github.com/qter-project/qvis/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qter-project/qvis.git"
+  },
+  "license": "GPL-3.0-or-later",
+  "author": "Arhan Chaudhary <arhan.ch@gmail.com>",
+  "devDependencies": {
+    "tailwindcss": "^4.1.18"
+  }
+}

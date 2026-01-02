@@ -1,2 +1,6 @@
 [workspace]
-members = [ "qvis" ]
+resolver = "3"
+members = [
+    "qvis",
+    "qvis_app",
+]

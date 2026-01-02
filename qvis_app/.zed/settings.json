@@ -1,0 +1,78 @@
+{
+  "languages": {
+    "Rust": {
+      "formatter": [{ "language_server": { "name": "rust-analyzer" } }],
+      "language_servers": [
+        "tailwindcss-language-server",
+        "rust-analyzer",
+        "emmet-language-server",
+      ],
+    },
+    "RSTML": {
+      "tab_size": 2,
+    },
+  },
+  "lsp": {
+    "tailwindcss-language-server": {
+      "settings": {
+        "includeLanguages": {
+          "rust": "html",
+        },
+        "experimental": {
+          "classRegex": [
+            "class=\"([^\"]*)",
+            "class={\"([^\"}]*)",
+            "class=format!\\(\"([^\"]*)\"",
+            "\\.className\\s*\\+?=\\s*['\"]([^'\"]*)['\"]",
+            "\\.setAttributeNS\\([^,]+,\\s*['\"]class['\"],\\s*['\"]([^'\"]*)['\"]\\)",
+            "\\.setAttribute\\(\\s*['\"]class['\"],\\s*['\"]([^'\"]*)['\"]\\)",
+            "\\.classList\\.add\\(\\s*['\"]([^'\"]*)['\"]\\)",
+            "\\.classList\\.remove\\(\\s*['\"]([^'\"]*)['\"]\\)",
+            "\\.classList\\.toggle\\(\\s*['\"]([^'\"]*)['\"]\\)",
+            "\\.classList\\.contains\\(\\s*['\"]([^'\"]*)['\"]\\)",
+            "\\.classList\\.replace\\(\\s*['\"]([^'\"]*)['\"],\\s*['\"]([^'\"]*)['\"]\\)",
+          ],
+        },
+      },
+    },
+    "rust-analyzer": {
+      "initialization_options": {
+        "cargo": {
+          "allFeatures": true,
+        },
+        "check": {
+          "features": "all",
+        },
+        "diagnostics": {
+          "experimental": {
+            "enable": true,
+          },
+        },
+        "hover": {
+          "actions": {
+            "enable": true,
+          },
+        },
+        "procMacro": {
+          "enable": true,
+          "ignored": {
+            "leptos-macro": ["server"],
+          },
+        },
+        "typing": {
+          "autoClosingAngleBrackets": {
+            "enable": true,
+          },
+        },
+        "rustfmt": {
+          "overrideCommand": [
+            "leptosfmt",
+            "--stdin",
+            "--rustfmt",
+            "--experimental-tailwind",
+          ],
+        },
+      },
+    },
+  },
+}

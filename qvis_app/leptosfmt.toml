@@ -1,0 +1,7 @@
+max_width = 120
+tab_spaces = 2
+indentation_style = "Spaces"
+newline_style = "Unix"
+
+[attr_values]
+class = "Tailwind"
