@@ -44,6 +44,7 @@
           "features": "all",
         },
         "diagnostics": {
+          "disabled": ["proc-macro-disabled"],
           "experimental": {
             "enable": true,
           },
