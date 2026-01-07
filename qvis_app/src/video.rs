@@ -8,19 +8,21 @@ use leptos_use::{
 };
 
 #[component]
-pub fn Video() -> impl IntoView {
+pub fn Video(enabled: ReadSignal<bool>, set_enabled: WriteSignal<bool>) -> impl IntoView {
     let video_ref = NodeRef::<leptos::html::Video>::new();
-    let UseUserMediaReturn {
-        stream,
-        enabled,
-        set_enabled,
-        ..
-    } = use_user_media_with_options(
+    let UseUserMediaReturn { stream, .. } = use_user_media_with_options(
         UseUserMediaOptions::default()
-            .video(VideoTrackConstraints::default().facing_mode(FacingMode::Environment)),
+            .video(VideoTrackConstraints::default().facing_mode(FacingMode::Environment))
+            .enabled((enabled, set_enabled).into()),
     );
 
     Effect::new(move |_| {
+        // let media = use_window()
+        //     .navigator()
+        //     .ok_or_else(|| JsValue::from_str("Failed to access window.navigator"))
+        //     .and_then(|n| n.media_devices())
+        //     .unwrap();
+
         match stream.get() {
             Some(Ok(s)) => {
                 video_ref.with(|v| {
@@ -41,17 +43,5 @@ pub fn Video() -> impl IntoView {
         });
     });
 
-    view! {
-      <div class="flex flex-col gap-4 text-center">
-        <div>
-          <video node_ref=video_ref controls=false autoplay=true muted=true class="w-auto h-96"></video>
-        </div>
-        <button on:click=move |_| {
-          set_enabled.set(!enabled.get())
-        }>{move || if enabled.get() { "Stop Video" } else { "Start Video" }}</button>
-        <button on:click=move |_| {
-          set_enabled.set(!enabled.get())
-        }>{move || if enabled.get() { "Stop" } else { "Start" }}</button>
-      </div>
-    }
+    view! { <video node_ref=video_ref controls=false autoplay=true muted=true class="w-auto h-96" /> }
 }

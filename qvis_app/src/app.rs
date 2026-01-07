@@ -15,7 +15,7 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
           <meta charset="utf-8" />
           <title>Cube Vision</title>
           <meta name="viewport" content="width=device-width, initial-scale=1" />
-          <link rel="stylesheet" id="leptos" href="/pkg/qvis-app.css" />
+          <link rel="stylesheet" id="leptos" href="/pkg/qvis_app.css" />
           <AutoReload options=options.clone() />
           <HydrationScripts options />
         </head>
@@ -49,25 +49,16 @@ pub fn App() -> impl IntoView {
         })
         .unwrap();
 
+    let (enabled, set_enabled) = signal(false);
+
     view! {
-      // <div class="p-2 m-2 rounded border border-gray-300">
-      // <h2>"Echo Channel Signal Example"</h2>
-      // <input
-      // type="text"
-      // prop:value=move || echo_input.get()
-      // on:input=move |ev| {
-      // set_echo_input.set(event_target_value(&ev));
-      // }
-      // placeholder="Type something to echo..."
-      // />
-      // <button on:click=move |_| {
-      // let msg = echo_input.get();
-      // if !msg.trim().is_empty() {
-      // take_picture_channel.send_message(msg).ok();
-      // set_echo_input.set(String::new());
-      // }
-      // }>"Send Echo"</button>
-      // </div>
-      <Video />
+      <div class="flex flex-col gap-4 text-center">
+        <div>
+          <Video enabled=enabled set_enabled=set_enabled />
+        </div>
+        <button on:click=move |_| {
+          set_enabled.set(!enabled.get())
+        }>{move || if enabled.get() { "Stop Video" } else { "Start Video" }}</button>
+      </div>
     }
 }

@@ -17,10 +17,11 @@ log = "0.4.29"
 leptos-use = "0.17.0"
 wasm-bindgen = "=0.2.106"
 leptos_ws = "0.9.1"
+serde = "1.0.228"
 tokio = { version = "1.49.0", features = ["time"], optional = true }
 leptos_axum = { version = "0.8.7", optional = true }
 axum = { version = "0.8.8", features = ["macros"], optional = true }
-serde = "1.0.228"
+axum-server = { version = "0.8.0", features = ["tls-rustls"], optional = true }
 
 [features]
 hydrate = [
@@ -30,6 +31,7 @@ hydrate = [
 ssr = [
     "dep:tokio",
     "dep:axum",
+    "dep:axum-server",
     "dep:leptos_axum",
     "leptos/ssr",
     "leptos_ws/ssr",
@@ -37,7 +39,7 @@ ssr = [
 ]
 
 [package.metadata.leptos]
-output-name = "qvis-app"
 lib-features = ["hydrate"]
 bin-features = ["ssr"]
 tailwind-input-file = "input.css"
+site-addr = "192.168.1.14:3000"

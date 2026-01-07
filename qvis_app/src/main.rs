@@ -13,7 +13,6 @@ use leptos_axum::{
 };
 use leptos_ws::WsSignals;
 use qvis_app::app::*;
-use tokio::net::TcpListener;
 
 #[derive(Clone, FromRef)]
 pub struct AppState {
@@ -55,6 +54,7 @@ async fn leptos_routes_handler(state: State<AppState>, req: Request<AxumBody>) -
 
 #[tokio::main]
 async fn main() {
+    use axum_server::tls_rustls::RustlsConfig;
     let conf = get_configuration(None).unwrap();
     let leptos_options = conf.leptos_options;
     let addr = leptos_options.site_addr;
@@ -88,10 +88,12 @@ async fn main() {
         .with_state(state);
 
     log!("listening on http://{addr}");
-    let listener = TcpListener::bind(&addr)
+
+    let config = RustlsConfig::from_pem_file("qvis_app/qvis_appCA.pem", "qvis_app/qvis_appCA-key.pem")
         .await
-        .expect("couldn't bind to address");
-    axum::serve(listener, app.into_make_service())
+        .unwrap();
+    axum_server::bind_rustls(addr, config)
+        .serve(app.into_make_service())
         .await
         .unwrap();
 }
