@@ -216,7 +216,9 @@ impl OrbitMatcher {
                     assert_eq!(ori_nums[*sticker] + ori, ori_nums[current_sticker]);
                     let ori_num = ori_nums[current_sticker];
 
-                    let pieces = sticker_color_piece.entry((ori_num, ArcIntern::clone(color))).or_default();
+                    let pieces = sticker_color_piece
+                        .entry((ori_num, ArcIntern::clone(color)))
+                        .or_default();
                     pieces.push((i, ori));
 
                     current_sticker = piece.twist().goes_to().get(current_sticker);
@@ -462,15 +464,19 @@ impl Ord for OrbitHeapElt {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{
+        collections::HashMap,
+        sync::{Arc, LazyLock},
+    };
 
     use internment::ArcIntern;
     use itertools::Itertools;
     use ndarray::array;
     use puzzle_theory::{
-        permutations::{Algorithm, Permutation},
-        puzzle_geometry::parsing::puzzle,
+        permutations::{Algorithm, Permutation, schreier_sims::StabilizerChain},
+        puzzle_geometry::{PuzzleGeometry, parsing::puzzle},
     };
+    use rand::{Rng, SeedableRng};
 
     use crate::puzzle_matching::{Matcher, OrbitHeapElt, PuzzleIter, SavedIter};
 
@@ -790,36 +796,107 @@ mod tests {
         );
     }
 
-    #[test]
-    fn solved() {
-        let geometry = puzzle("3x3").into_inner();
+    static CONFOUNDING_COLORS: LazyLock<HashMap<ArcIntern<str>, ArcIntern<str>>> =
+        LazyLock::new(|| {
+            let mut map = HashMap::new();
+            map.insert(ArcIntern::from("white"), ArcIntern::from("yellow"));
+            map.insert(ArcIntern::from("yellow"), ArcIntern::from("white"));
+            map.insert(ArcIntern::from("orange"), ArcIntern::from("red"));
+            map.insert(ArcIntern::from("red"), ArcIntern::from("orange"));
+
+            map
+        });
+
+    /// Test whether the matcher identifies the permutation correctly and returns whether it does so.
+    fn test_perm<R: Rng + ?Sized>(
+        perm: &Permutation,
+        matcher: &Matcher,
+        geometry: &PuzzleGeometry,
+        rng: &mut R,
+        noise: i64,
+    ) -> bool {
+        let group = geometry.permutation_group();
 
         let mut baseline = HashMap::new();
 
         for color in geometry.permutation_group().facelet_colors() {
-            baseline.insert(ArcIntern::clone(color), -2.);
+            baseline.insert(ArcIntern::clone(color), -100.);
         }
 
         let mut observation = vec![baseline; 48];
 
-        let purduehackers =
-            Algorithm::parse_from_string(geometry.permutation_group(), "R2 L2 D2 R2").unwrap();
-
-        for (spot, is) in purduehackers
-            .permutation()
-            .comes_from()
-            .iter_infinite()
-            .enumerate()
-            .take(48)
-        {
-            let v = observation[spot]
-                .get_mut(&geometry.permutation_group().facelet_colors()[is])
-                .unwrap();
-            *v += 1.;
+        for sticker in &mut observation {
+            for color in sticker.values_mut() {
+                let noise_amt = rng.random_range(-noise..=noise);
+                *color += noise_amt as f64;
+            }
         }
 
-        let matcher = Matcher::new(geometry);
+        let mut expected_ll = 0.;
 
-        assert_eq!(matcher.most_likely(&observation), (purduehackers.permutation().clone(), -48.));
+        for (spot, is) in perm.comes_from().iter_infinite().enumerate().take(48) {
+            let color = &group.facelet_colors()[is];
+            let v = observation[spot].get_mut(color).unwrap();
+            *v += 100.;
+            expected_ll += *v;
+
+            if let Some(confounding) = CONFOUNDING_COLORS.get(color) {
+                let v = observation[spot].get_mut(confounding).unwrap();
+                *v += 70.;
+            }
+        }
+
+        let (found, ll) = matcher.most_likely(&observation);
+
+        if found == *perm {
+            assert_eq!(ll, expected_ll);
+            true
+        } else {
+            assert!(
+                ll >= expected_ll,
+                "expected: ({perm}, {expected_ll}); found: ({found}, {ll})"
+            );
+            false
+        }
+    }
+
+    #[test]
+    fn solved() {
+        let geometry = puzzle("3x3").into_inner();
+        let stabchain = StabilizerChain::new(&geometry.permutation_group());
+
+        let matcher = Matcher::new(Arc::clone(&geometry));
+
+        let mut rng = rand::rngs::SmallRng::from_seed(*b"I love DP & CP (as in dynamic pr");
+
+        assert!(test_perm(
+            Algorithm::parse_from_string(geometry.permutation_group(), "R2 L2 D2 R2")
+                .unwrap()
+                .permutation(),
+            &matcher,
+            &geometry,
+            &mut rng,
+            0,
+        ));
+
+        for _ in 0..200 {
+            assert!(test_perm(
+                &stabchain.random(&mut rng),
+                &matcher,
+                &geometry,
+                &mut rng,
+                15,
+            ));
+        }
+
+        for _ in 0..200 {
+            test_perm(
+                &stabchain.random(&mut rng),
+                &matcher,
+                &geometry,
+                &mut rng,
+                50,
+            );
+        }
     }
 }
