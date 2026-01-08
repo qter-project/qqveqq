@@ -2,10 +2,12 @@ use crate::{
     take_picture::{TAKE_PICTURE_CHANNEL, TakePictureMessage},
     video::Video,
 };
-use leptos::{logging::log, prelude::*};
+use leptos::prelude::*;
 use leptos_ws::ChannelSignal;
+use log::{LevelFilter, Log, Metadata, Record, info};
 use puzzle_theory::puzzle_geometry::parsing::puzzle;
 use qvis::CVProcessor;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
@@ -15,11 +17,12 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
           <meta charset="utf-8" />
           <title>Cube Vision</title>
           <meta name="viewport" content="width=device-width, initial-scale=1" />
+          <link rel="shortcut icon" href="favicon.ico" type="image/x-icon" />
           <link rel="stylesheet" id="leptos" href="/pkg/qvis_app.css" />
           <AutoReload options=options.clone() />
           <HydrationScripts options />
         </head>
-        <body>
+        <body class="text-white bg-black">
           <App />
         </body>
       </html>
@@ -28,17 +31,26 @@ pub fn shell(options: LeptosOptions) -> impl IntoView {
 
 #[component]
 pub fn App() -> impl IntoView {
+    let (messages, set_messages) = signal(Vec::<(u32, String)>::new());
+    let logger = Box::leak(Box::new(MessagesLogger {
+        writer: set_messages,
+        id: AtomicU32::default(),
+    }));
+    if log::set_logger(logger).is_ok() {
+        log::set_max_level(LevelFilter::Debug);
+    }
+
     leptos_ws::provide_websocket();
-
-    let take_picture_channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).unwrap();
-
     let puzzle_geometry = puzzle("3x3").into_inner();
     let cv = CVProcessor::new(puzzle_geometry, 0);
+
+    let take_picture_channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).unwrap();
+    let messages_container = NodeRef::<leptos::html::Div>::new();
 
     take_picture_channel
         .clone()
         .on_client(move |msg: &TakePictureMessage| {
-            log!("Recieved message {msg:#?}");
+            info!("Recieved message {msg:#?}");
             let TakePictureMessage::TakePicture = msg else {
                 return;
             };
@@ -49,16 +61,69 @@ pub fn App() -> impl IntoView {
         })
         .unwrap();
 
-    let (enabled, set_enabled) = signal(false);
+    let (hidden, set_hidden) = signal(true);
+
+    Effect::watch(
+        move || messages.get(),
+        move |_, _, _| {
+            messages_container.with_untracked(|container| {
+                let Some(container) = container else {
+                    return;
+                };
+                let scroll_height = container.scroll_height();
+                let client_height = container.client_height();
+                set_hidden.set(scroll_height <= client_height);
+                container.set_scroll_top(scroll_height);
+            });
+        },
+        false,
+    );
 
     view! {
-      <div class="flex flex-col gap-4 text-center">
-        <div>
-          <Video enabled=enabled set_enabled=set_enabled />
+      <header class="font-sans text-4xl font-bold tracking-wider text-center bg-[rgb(47,48,80)] leading-20">
+        "QVIS"
+      </header>
+      <div class="flex flex-col gap-4 justify-center text-center">
+        <Video />
+        "Messages:"
+        <div class="relative font-mono text-left border-2 border-gray-300 h-70">
+          <div
+            class:hidden=hidden
+            class="hidden absolute top-0 right-0 left-0 from-black to-transparent pointer-events-none h-15 bg-linear-to-b"
+          ></div>
+          <div
+            node_ref=messages_container
+            class="overflow-y-auto h-full [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-thumb]:bg-white"
+          >
+            <ul class="pl-4 list-disc list-inside">
+              <For each=move || messages.get() key=|msg| msg.0 let((_, msg))>
+                <li>{msg}</li>
+              </For>
+            </ul>
+          </div>
         </div>
-        <button on:click=move |_| {
-          set_enabled.set(!enabled.get())
-        }>{move || if enabled.get() { "Stop Video" } else { "Start Video" }}</button>
       </div>
     }
+}
+
+struct MessagesLogger {
+    writer: WriteSignal<Vec<(u32, String)>>,
+    id: AtomicU32,
+}
+
+impl Log for MessagesLogger {
+    fn enabled(&self, _metadata: &Metadata) -> bool {
+        true
+    }
+
+    fn log(&self, record: &Record) {
+        self.writer.update(|v| {
+            v.push((
+                self.id.fetch_add(1, Ordering::SeqCst),
+                format!("[{}] {}", record.level(), record.args()),
+            ))
+        });
+    }
+
+    fn flush(&self) {}
 }

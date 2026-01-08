@@ -42,4 +42,5 @@ ssr = [
 lib-features = ["hydrate"]
 bin-features = ["ssr"]
 tailwind-input-file = "input.css"
-site-addr = "192.168.1.14:3000"
+site-addr = "0.0.0.0:3000"
+assets-dir = "public"

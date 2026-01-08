@@ -1,19 +1,20 @@
-use leptos::{
-    logging::{error, log},
-    prelude::*,
-};
+use leptos::prelude::*;
 use leptos_use::{
     FacingMode, UseUserMediaOptions, UseUserMediaReturn, VideoTrackConstraints,
     use_user_media_with_options,
 };
+use log::{error, info};
 
 #[component]
-pub fn Video(enabled: ReadSignal<bool>, set_enabled: WriteSignal<bool>) -> impl IntoView {
+pub fn Video() -> impl IntoView {
     let video_ref = NodeRef::<leptos::html::Video>::new();
-    let UseUserMediaReturn { stream, .. } = use_user_media_with_options(
+    let UseUserMediaReturn {
+        stream,
+        set_enabled,
+        ..
+    } = use_user_media_with_options(
         UseUserMediaOptions::default()
-            .video(VideoTrackConstraints::default().facing_mode(FacingMode::Environment))
-            .enabled((enabled, set_enabled).into()),
+            .video(VideoTrackConstraints::default().facing_mode(FacingMode::Environment)), // .enabled((enabled, set_enabled).into()),
     );
 
     Effect::new(move |_| {
@@ -25,6 +26,7 @@ pub fn Video(enabled: ReadSignal<bool>, set_enabled: WriteSignal<bool>) -> impl 
 
         match stream.get() {
             Some(Ok(s)) => {
+                info!("Stream is currently enabled");
                 video_ref.with(|v| {
                     if let Some(v) = v {
                         v.set_src_object(Some(&s));
@@ -33,7 +35,7 @@ pub fn Video(enabled: ReadSignal<bool>, set_enabled: WriteSignal<bool>) -> impl 
                 return;
             }
             Some(Err(e)) => error!("Failed to get media stream: {:?}", e),
-            None => log!("No stream yet"),
+            None => info!("Stream is currently disabled"),
         }
 
         video_ref.with(|v| {
@@ -43,5 +45,19 @@ pub fn Video(enabled: ReadSignal<bool>, set_enabled: WriteSignal<bool>) -> impl 
         });
     });
 
-    view! { <video node_ref=video_ref controls=false autoplay=true muted=true class="w-auto h-96" /> }
+    let toggle_enabled = move |_| {
+        set_enabled.update(|e| *e = !*e);
+    };
+
+    view! {
+      <video
+        node_ref=video_ref
+        on:click=toggle_enabled
+        controls=false
+        autoplay=true
+        muted=true
+        class="w-auto h-96 border-2 border-white"
+      />
+      <canvas class="hidden" />
+    }
 }
