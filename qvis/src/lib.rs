@@ -1,4 +1,4 @@
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
 
 use puzzle_theory::{permutations::Permutation, puzzle_geometry::PuzzleGeometry};
 
