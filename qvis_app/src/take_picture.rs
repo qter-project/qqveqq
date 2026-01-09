@@ -1,12 +1,16 @@
 use leptos::{
-    logging::log,
     prelude::*,
     server_fn::codec::{GetUrl, Json},
 };
-use leptos_ws::ChannelSignal;
 use puzzle_theory::permutations::Permutation;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
+
+#[cfg(feature = "ssr")]
+mod ssr_imports {
+    pub use std::sync::Mutex;
+    pub use leptos::logging::log;
+    pub use leptos_ws::ChannelSignal;
+}
 
 pub const TAKE_PICTURE_CHANNEL: &str = "take_picture_channel";
 
@@ -22,6 +26,8 @@ pub enum TakePictureMessage {
   output = Json
 )]
 pub async fn take_picture() -> Result<Permutation, ServerFnError> {
+    use ssr_imports::*;
+    
     let channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).map_err(ServerFnError::new)?;
 
     let (tx, rx) = tokio::sync::oneshot::channel();

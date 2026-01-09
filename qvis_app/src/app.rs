@@ -46,6 +46,10 @@ pub fn App() -> impl IntoView {
 
     let take_picture_channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).unwrap();
     let messages_container = NodeRef::<leptos::html::Div>::new();
+    let (overflowing, set_overflowing) = signal(true);
+    let (take_picture_command, set_take_picture) = signal(());
+    
+    let take_picture = move |_| set_take_picture.set(());
 
     take_picture_channel
         .clone()
@@ -61,36 +65,33 @@ pub fn App() -> impl IntoView {
         })
         .unwrap();
 
-    let (hidden, set_hidden) = signal(true);
-
     Effect::watch(
         move || messages.get(),
         move |_, _, _| {
-            messages_container.with_untracked(|container| {
-                let Some(container) = container else {
-                    return;
-                };
-                let scroll_height = container.scroll_height();
-                let client_height = container.client_height();
-                set_hidden.set(scroll_height <= client_height);
-                container.set_scroll_top(scroll_height);
-            });
+            let Some(container) = messages_container.get_untracked() else {
+                return;
+            };
+            let scroll_height = container.scroll_height();
+            let client_height = container.client_height();
+            set_overflowing.set(scroll_height > client_height);
+            container.set_scroll_top(scroll_height);
         },
         false,
     );
 
     view! {
-      <header class="font-sans text-4xl font-bold tracking-wider text-center bg-[rgb(47,48,80)] leading-20">
+      <header class="mb-5 font-sans text-4xl font-bold tracking-wider text-center bg-[rgb(47,48,80)] leading-20">
         "QVIS"
       </header>
-      <div class="flex flex-col gap-4 justify-center text-center">
-        <Video />
+      <main class="flex flex-col gap-4 justify-center mr-4 ml-4 text-center">
+        <Video take_picture_command />
+        <button on:click=take_picture>HERE</button>
         "Messages:"
-        <div class="relative font-mono text-left border-2 border-gray-300 h-70">
+        <div class="relative font-mono text-left border-2 border-gray-300 h-72">
           <div
-            class:hidden=hidden
-            class="hidden absolute top-0 right-0 left-0 from-black to-transparent pointer-events-none h-15 bg-linear-to-b"
-          ></div>
+            class:hidden=move || !overflowing.get()
+            class="absolute top-0 right-0 left-0 mr-3 from-black to-transparent pointer-events-none h-15 bg-linear-to-b"
+          />
           <div
             node_ref=messages_container
             class="overflow-y-auto h-full [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-thumb]:bg-white"
@@ -102,7 +103,7 @@ pub fn App() -> impl IntoView {
             </ul>
           </div>
         </div>
-      </div>
+      </main>
     }
 }
 
@@ -121,7 +122,7 @@ impl Log for MessagesLogger {
             v.push((
                 self.id.fetch_add(1, Ordering::SeqCst),
                 format!("[{}] {}", record.level(), record.args()),
-            ))
+            ));
         });
     }
 

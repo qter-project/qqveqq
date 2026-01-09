@@ -1,3 +1,6 @@
+#![warn(clippy::pedantic)]
+#![allow(clippy::must_use_candidate, clippy::wildcard_imports, clippy::too_many_lines)]
+
 pub mod app;
 pub mod take_picture;
 pub mod video;

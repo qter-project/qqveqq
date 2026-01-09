@@ -87,7 +87,7 @@ async fn main() {
         ))
         .with_state(state);
 
-    log!("listening on http://{addr}");
+    log!("listening on https://{addr}");
 
     let config = RustlsConfig::from_pem_file("qvis_app/qvis_appCA.pem", "qvis_app/qvis_appCA-key.pem")
         .await
