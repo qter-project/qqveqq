@@ -39,13 +39,13 @@ impl Matcher {
 
     pub fn most_likely(
         &self,
-        log_likelihoods: &[HashMap<ArcIntern<str>, f64>],
+        confidences: &[HashMap<ArcIntern<str>, f64>],
     ) -> (Permutation, f64) {
         let iters = self
             .orbits
             .iter()
             .map(|v| SavedIter {
-                iter: v.most_likely_matchings(log_likelihoods),
+                iter: v.most_likely_matchings(confidences),
                 saved: Vec::new(),
             })
             .collect();

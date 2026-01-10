@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 internment = { version = "0.8.6", features = ["arc"] }
 itertools = "0.14.0"
+kiddo = "5.2.4"
 ndarray = "0.17.1"
 puzzle_theory = { git = "https://github.com/qter-project/puzzle-theory", features = [ "rand" ] }
 rand = "0.9.2"
