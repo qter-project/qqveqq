@@ -40,8 +40,8 @@ impl CVProcessor<AssigningPixels> {
         CVProcessor {
             puzzle: Arc::clone(&puzzle),
             image_size,
-            matcher: Matcher::new(puzzle),
-            state: AssigningPixels::new(mask),
+            matcher: Matcher::new(Arc::clone(&puzzle)),
+            state: AssigningPixels::new(mask, &puzzle),
         }
     }
 
