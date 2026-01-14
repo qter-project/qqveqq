@@ -16,8 +16,11 @@ pub struct CVProcessor {
 }
 
 pub enum Pixel {
+    /// The pixel is not assigned to anything
     Unassigned,
+    /// The pixel is white balance for the face of the given color
     WhiteBalance(ArcIntern<str>),
+    /// The pixel is assigned to a particular sticker
     Sticker(usize),
 }
 
