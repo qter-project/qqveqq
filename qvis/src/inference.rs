@@ -13,6 +13,14 @@ const CONFIDENCE_PERCENTILE: f64 = 0.2;
 const MAX_NEAREST_N: usize = 10;
 const MAX_FRACTION: usize = 8;
 
+fn white_balance(mut color: (f64, f64, f64), neutral: (f64, f64, f64)) -> (f64, f64, f64) {
+    color.0 /= neutral.0;
+    color.1 /= neutral.1;
+    color.2 /= neutral.2;
+
+    color
+}
+
 struct Pixel {
     idx: usize,
     kdtrees: HashMap<ArcIntern<str>, KdTree<f64, 3>>,
@@ -20,15 +28,16 @@ struct Pixel {
 
 pub struct Inference {
     pixels_by_sticker: Box<[Box<[Pixel]>]>,
+    white_balance_by_face: HashMap<ArcIntern<str>, Box<[usize]>>,
     group: Arc<PermutationGroup>,
     colors: Box<[ArcIntern<str>]>,
 }
 
 impl Inference {
     pub(crate) fn new(assignment: Box<[super::Pixel]>, puzzle: &PuzzleGeometry) -> Inference {
-        let mut pixels_by_sticker: Vec<Vec<Pixel>> = Vec::new();
-
         let group = puzzle.permutation_group();
+
+        let mut pixels_by_sticker: Vec<Vec<Pixel>> = Vec::new();
 
         for _ in 0..group.facelet_count() {
             pixels_by_sticker.push(Vec::new());
@@ -48,19 +57,61 @@ impl Inference {
             .map(|a| (a, KdTree::<f64, 3>::new()))
             .collect();
 
-        for (idx, pixel) in assignment.into_iter().enumerate() {
-            let super::Pixel::Sticker(sticker) = pixel else {
-                continue;
-            };
+        let mut white_balance_by_face = colors
+            .iter()
+            .cloned()
+            .map(|v| (v, Vec::<usize>::new()))
+            .collect::<HashMap<_, _>>();
 
-            pixels_by_sticker[sticker].push(Pixel { idx, kdtrees: empty_kdtrees.clone() });
+        for (idx, pixel) in assignment.into_iter().enumerate() {
+            match pixel {
+                crate::Pixel::Unassigned => {}
+                crate::Pixel::WhiteBalance(arc_intern) => white_balance_by_face
+                    .get_mut(&arc_intern)
+                    .unwrap()
+                    .push(idx),
+                crate::Pixel::Sticker(sticker) => {
+                    pixels_by_sticker[sticker].push(Pixel {
+                        idx,
+                        kdtrees: empty_kdtrees.clone(),
+                    });
+                }
+            }
         }
 
         Inference {
             pixels_by_sticker: pixels_by_sticker.into_iter().map(|v| v.into()).collect(),
+            white_balance_by_face: white_balance_by_face
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
             group,
             colors,
         }
+    }
+
+    fn white_balance(
+        &self,
+        picture: &[(f64, f64, f64)],
+    ) -> HashMap<ArcIntern<str>, (f64, f64, f64)> {
+        self.white_balance_by_face
+            .iter()
+            .map(|(k, v)| {
+                let white = v
+                    .iter()
+                    .map(|idx| picture[*idx])
+                    .tree_reduce(|(r1, g1, b1), (r2, g2, b2)| (r1 + r2, g1 + g2, b1 + b2));
+
+                (ArcIntern::clone(k), match white {
+                    Some((r, g, b)) => {
+                        let len = v.len() as f64;
+
+                        (r / len, g / len, b / len)
+                    },
+                    None => (1., 1., 1.),
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn infer(&self, picture: &[(f64, f64, f64)]) -> Box<[HashMap<ArcIntern<str>, f64>]> {
@@ -73,13 +124,18 @@ impl Inference {
             .map(|v| (v, Vec::<f64>::new()))
             .collect::<HashMap<_, _>>();
 
+        let wb = self.white_balance(picture);
+
         self.pixels_by_sticker
             .iter()
-            .map(|v| {
+            .enumerate()
+            .map(|(idx, v)| {
+                let wb = *wb.get(&self.group.facelet_colors()[idx]).unwrap();
+                
                 // Maybe pick random subset
                 for pixel in v {
                     for (color, kdtree) in &pixel.kdtrees {
-                        let (r, g, b) = picture[pixel.idx];
+                        let (r, g, b) = white_balance(picture[pixel.idx], wb);
                         let n = MAX_NEAREST_N
                             .min(kdtree.size() as usize / MAX_FRACTION)
                             .max(1);
@@ -114,11 +170,14 @@ impl Inference {
     }
 
     pub(crate) fn calibrate(&mut self, image: &[(f64, f64, f64)], state: Permutation) {
+        let wb = self.white_balance(image);
+        
         for (sticker, pixels) in self.pixels_by_sticker.iter_mut().enumerate() {
+            let wb = *wb.get(&self.group.facelet_colors()[sticker]).unwrap();
             let color = &self.group.facelet_colors()[state.comes_from().get(sticker)];
 
             for pixel in pixels {
-                let (r, g, b) = image[pixel.idx];
+                let (r, g, b) = white_balance(image[pixel.idx], wb);
                 pixel.kdtrees.get_mut(color).unwrap().add(&[r, g, b], 0);
             }
         }
