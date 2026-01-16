@@ -34,7 +34,7 @@ pub struct Inference {
 }
 
 impl Inference {
-    pub(crate) fn new(assignment: Box<[super::Pixel]>, puzzle: &PuzzleGeometry) -> Inference {
+    pub fn new(assignment: Box<[super::Pixel]>, puzzle: &PuzzleGeometry) -> Inference {
         let group = puzzle.permutation_group();
 
         let mut pixels_by_sticker: Vec<Vec<Pixel>> = Vec::new();
@@ -102,19 +102,22 @@ impl Inference {
                     .map(|idx| picture[*idx])
                     .tree_reduce(|(r1, g1, b1), (r2, g2, b2)| (r1 + r2, g1 + g2, b1 + b2));
 
-                (ArcIntern::clone(k), match white {
-                    Some((r, g, b)) => {
-                        let len = v.len() as f64;
+                (
+                    ArcIntern::clone(k),
+                    match white {
+                        Some((r, g, b)) => {
+                            let len = v.len() as f64;
 
-                        (r / len, g / len, b / len)
+                            (r / len, g / len, b / len)
+                        }
+                        None => (1., 1., 1.),
                     },
-                    None => (1., 1., 1.),
-                })
+                )
             })
             .collect()
     }
 
-    pub(crate) fn infer(&self, picture: &[(f64, f64, f64)]) -> Box<[HashMap<ArcIntern<str>, f64>]> {
+    pub fn infer(&self, picture: &[(f64, f64, f64)]) -> Box<[HashMap<ArcIntern<str>, f64>]> {
         let mut rng = rand::rng();
 
         let mut confidences_by_pixel = self
@@ -131,7 +134,7 @@ impl Inference {
             .enumerate()
             .map(|(idx, v)| {
                 let wb = *wb.get(&self.group.facelet_colors()[idx]).unwrap();
-                
+
                 // Maybe pick random subset
                 for pixel in v {
                     for (color, kdtree) in &pixel.kdtrees {
@@ -144,10 +147,13 @@ impl Inference {
                         // https://faculty.washington.edu/yenchic/18W_425/Lec7_knn_basis.pdf
                         // TODO: Try to account for non uniform distributions?
                         const UNIT_SPHERE: f64 = 4. / 3. * core::f64::consts::PI;
-                        let density = n as f64 / kdtree.size() as f64
-                            * (nn.last().unwrap().distance.powi(3) * UNIT_SPHERE).recip();
 
-                        confidences_by_pixel.get_mut(color).unwrap().push(density);
+                        if let Some(last) = nn.last() {
+                            let density = n as f64 / kdtree.size() as f64
+                                * (last.distance.powi(3) * UNIT_SPHERE).recip();
+
+                            confidences_by_pixel.get_mut(color).unwrap().push(density);
+                        }
                     }
                 }
 
@@ -169,9 +175,9 @@ impl Inference {
             .collect()
     }
 
-    pub(crate) fn calibrate(&mut self, image: &[(f64, f64, f64)], state: Permutation) {
+    pub fn calibrate(&mut self, image: &[(f64, f64, f64)], state: &Permutation) {
         let wb = self.white_balance(image);
-        
+
         for (sticker, pixels) in self.pixels_by_sticker.iter_mut().enumerate() {
             let wb = *wb.get(&self.group.facelet_colors()[sticker]).unwrap();
             let color = &self.group.facelet_colors()[state.comes_from().get(sticker)];
@@ -249,9 +255,125 @@ pub(crate) fn quickselect<T, R: Rng + ?Sized>(
 
 #[cfg(test)]
 mod tests {
-    use rand::Rng;
+    use std::{
+        collections::HashMap,
+        sync::{Arc, LazyLock},
+    };
+
+    use internment::ArcIntern;
+    use puzzle_theory::{
+        permutations::{Permutation, PermutationGroup, schreier_sims::StabilizerChain},
+        puzzle_geometry::parsing::puzzle,
+    };
+    use rand::{Rng, SeedableRng};
+
+    use crate::{inference::Inference, puzzle_matching::Matcher};
 
     use super::quickselect;
+
+    static NATURAL_COLORS: LazyLock<HashMap<ArcIntern<str>, (f64, f64, f64)>> =
+        LazyLock::new(|| {
+            let mut map = HashMap::new();
+
+            map.insert(ArcIntern::from("red"), (1., 0.2, 0.2));
+            map.insert(ArcIntern::from("orange"), (1., 0.6, 0.2));
+            map.insert(ArcIntern::from("white"), (1., 1., 1.));
+            map.insert(ArcIntern::from("yellow"), (0.8, 0.8, 0.2));
+            map.insert(ArcIntern::from("blue"), (0.2, 0.5, 1.));
+            map.insert(ArcIntern::from("green"), (0.3, 1., 0.5));
+
+            map
+        });
+
+    fn simulate_picture<R: Rng + ?Sized>(
+        perm: &Permutation,
+        group: &PermutationGroup,
+        shadowful_noise: f64,
+        colorful_noise: f64,
+        rng: &mut R,
+        out: &mut [(f64, f64, f64)],
+    ) {
+        assert_eq!(out.len(), (48 + 6) * 20);
+
+        for face in 0..6 {
+            // Simulate random lighting on this face to test our white balance code
+            let white = (
+                rng.random_range(0.2..1.2),
+                rng.random_range(0.2..1.2),
+                rng.random_range(0.2..1.2),
+            );
+
+            for spot in 0..8 {
+                let idx = spot + face * 8;
+
+                let is = perm.comes_from().get(idx);
+                let mut color = *NATURAL_COLORS.get(&group.facelet_colors()[is]).unwrap();
+                color.0 *= white.0;
+                color.1 *= white.1;
+                color.2 *= white.2;
+
+                out[idx * 20..(idx + 1) * 20].fill(color);
+            }
+
+            out[(48 + face) * 20..(48 + face + 1) * 20].fill(white);
+        }
+
+        for (r, g, b) in out.iter_mut() {
+            // Add random noise to simulate differences in shadowing
+            let noise = rng.random_range(((1. + shadowful_noise).recip())..(1. + shadowful_noise));
+            *r *= noise;
+            *g *= noise;
+            *b *= noise;
+        }
+
+        for v in out.iter_mut().flat_map(|(r, g, b)| [r, g, b]) {
+            // Add some random noise to simulate camera noise
+            *v *= rng.random_range(((1. + colorful_noise).recip())..(1. + colorful_noise));
+            // Clamp everything to be less than one to simulate overexposure
+            *v = v.min(1.);
+        }
+    }
+
+    #[test]
+    fn test_inference() {
+        let mut assignment = Vec::new();
+
+        for i in 0..48 {
+            for _ in 0..20 {
+                assignment.push(crate::Pixel::Sticker(i));
+            }
+        }
+
+        for color in ["white", "orange", "green", "red", "blue", "yellow"].map(ArcIntern::from) {
+            for _ in 0..20 {
+                assignment.push(crate::Pixel::WhiteBalance(ArcIntern::clone(&color)))
+            }
+        }
+
+        let puzzle = puzzle("3x3");
+        let group = puzzle.permutation_group();
+        let stabchain = StabilizerChain::new(&group);
+
+        let mut inference = Inference::new(assignment.into(), &puzzle);
+
+        let mut rng = rand::rngs::SmallRng::from_seed(*b"Buying black on the black market");
+
+        let mut img = [(0., 0., 0.); (48 + 6) * 20];
+
+        for _ in 0..30 {
+            let perm = stabchain.random(&mut rng);
+            simulate_picture(&perm, &group, 0.2, 0.1, &mut rng, &mut img);
+            inference.calibrate(&img, &perm);
+        }
+
+        let matcher = Matcher::new(Arc::clone(&puzzle));
+
+        for _ in 0..100 {
+            let perm = stabchain.random(&mut rng);
+            simulate_picture(&perm, &group, 0.2, 0.1, &mut rng, &mut img);
+            assert_eq!(matcher.most_likely(&inference.infer(&img)).0, perm);
+        }
+    }
 
     #[test]
     fn test_quickselect() {

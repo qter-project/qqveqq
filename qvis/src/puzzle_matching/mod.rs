@@ -298,6 +298,9 @@ impl OrbitMatcher {
             cache: None,
             facelet_count: self.puzzle.permutation_group().facelet_count(),
         }
+        .dedup_by(|a, b| {
+            a.0 == b.0
+        })
         .filter(|(perm, _)| self.stab_chain.is_member(perm.clone()))
     }
 }
@@ -458,7 +461,13 @@ impl Ord for OrbitHeapElt {
             return Ordering::Equal;
         }
 
-        self.log_likelihood.total_cmp(&other.log_likelihood)
+        match self.log_likelihood.total_cmp(&other.log_likelihood) {
+            // Break ties
+            Ordering::Equal => {
+                self.matching.cmp(&other.matching)
+            },
+            v => v
+        }
     }
 }
 

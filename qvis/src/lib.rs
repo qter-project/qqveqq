@@ -52,7 +52,7 @@ impl CVProcessor {
     pub fn calibrate(&mut self, image: &[(f64, f64, f64)], state: Permutation) {
         assert_eq!(self.image_size, image.len());
 
-        self.inference.calibrate(image, state);
+        self.inference.calibrate(image, &state);
     }
 
     /// Process an image and return the most likely state that the puzzle appears to be in, along with the confidence in the prediction. This is guaranteed to be a valid member of the group.
