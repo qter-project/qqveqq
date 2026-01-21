@@ -1,7 +1,7 @@
 use opencv::{
-    core::{BORDER_CONSTANT, CV_8UC1, Point, Rect, Scalar, Size},
+    core::{BORDER_CONSTANT, CV_8UC1, CV_8UC3, Point, Rect, Scalar, Size},
     highgui, imgcodecs,
-    imgproc::{self, FLOODFILL_FIXED_RANGE, FLOODFILL_MASK_ONLY},
+    imgproc::{self, FILLED, FLOODFILL_FIXED_RANGE, FLOODFILL_MASK_ONLY, LINE_8},
     prelude::*,
 };
 use std::{
@@ -10,17 +10,23 @@ use std::{
 };
 
 const WINDOW_NAME: &str = "Qvis Sticker Calibration";
+const EROSION_SIZE_TRACKBAR_NAME: &str = "Erosion size";
 const ERODE_DEF_ANCHOR: Point = Point::new(-1, -1);
+const XY_CIRCLE_RADIUS: i32 = 10;
 
 struct State {
     img: Mat,
+    tmp_mask: Mat,
     grayscale_mask: Mat,
-    eroded_mask: Mat,
+    eroded_grayscale_mask: Mat,
+    colored_eroded_mask_cropped: Mat,
     erosion_kernel: Mat,
     mask_roi: Rect,
     displayed_img: Mat,
     upper_flood_fill_diff: i32,
-    maybe_drag_xy: Option<(i32, i32)>,
+    maybe_drag_origin: Option<(i32, i32)>,
+    maybe_xy: Option<(i32, i32)>,
+    dragging: bool,
     err: Option<opencv::Error>,
 }
 
@@ -49,14 +55,20 @@ fn perm6_from_number(mut n: u16) -> [i32; 6] {
 fn mouse_callback(state: &mut State, event: i32, x: i32, y: i32) -> opencv::Result<()> {
     match event {
         highgui::EVENT_MOUSEMOVE => {
-            let Some((drag_x, drag_y)) = state.maybe_drag_xy else {
+            let Some((drag_x, drag_y)) = state.maybe_drag_origin else {
                 return Ok(());
             };
+            if !state.dragging {
+                return Ok(());
+            }
+            state.maybe_xy = Some((x, y));
+
             let distance = ((x - drag_x) as f64).hypot((y - drag_y) as f64) as i32;
-            let angle = (((y - drag_y) as f64).atan2((x - drag_x) as f64) * 1440.0 / PI) as u16;
+            let angle =
+                (((y - drag_y) as f64).atan2((x - drag_x) as f64).abs() * 1440.0 / PI) as u16;
             let perm6 = perm6_from_number(angle);
 
-            state.grayscale_mask.set_to_def(&Scalar::all(0.0))?;
+            state.grayscale_mask.set_to_def(&Scalar::all(0.0))?; // needed
             imgproc::flood_fill_mask(
                 &mut state.img,
                 &mut state.grayscale_mask,
@@ -75,47 +87,22 @@ fn mouse_callback(state: &mut State, event: i32, x: i32, y: i32) -> opencv::Resu
                 )),
                 4 | FLOODFILL_FIXED_RANGE | FLOODFILL_MASK_ONLY | (255 << 8),
             )?;
-            imgproc::erode(
-                &state.grayscale_mask,
-                &mut state.eroded_mask,
-                &state.erosion_kernel,
-                ERODE_DEF_ANCHOR,
-                2,
-                BORDER_CONSTANT,
-                imgproc::morphology_default_border_value()?,
-            )?;
-            *state.eroded_mask.at_2d_mut::<u8>(drag_y + 1, drag_x + 1)? = 255;
-            {
-                let tmp_mask = &mut state.grayscale_mask;
-                tmp_mask.set_to_def(&Scalar::all(0.0))?;
-                imgproc::flood_fill_mask(
-                    &mut Mat::roi_mut(&mut state.eroded_mask, state.mask_roi)?,
-                    tmp_mask,
-                    Point::new(drag_x, drag_y),
-                    Scalar::default(), // ignored
-                    &mut Rect::default(),
-                    Scalar::all(0.0),
-                    Scalar::all(0.0),
-                    4 | FLOODFILL_FIXED_RANGE | FLOODFILL_MASK_ONLY | (255 << 8),
-                )?;
-                std::mem::swap(&mut state.eroded_mask, tmp_mask);
-            }
-            let eroded_mask_cropped = Mat::roi(&state.eroded_mask, state.mask_roi)?;
-            let channels = opencv::core::Vector::<Mat>::from_iter([
-                eroded_mask_cropped.clone_pointee(),
-                Mat::zeros(state.img.rows(), state.img.cols(), CV_8UC1)?.to_mat()?,
-                eroded_mask_cropped.clone_pointee(),
-            ]);
-            opencv::core::merge(&channels, &mut state.eroded_mask)?;
-
-            opencv::core::add_def(&state.img, &state.eroded_mask, &mut state.displayed_img)?;
-            highgui::imshow(WINDOW_NAME, &state.displayed_img)?;
+            post_flood_fill(state)?;
         }
         highgui::EVENT_LBUTTONDOWN => {
-            state.maybe_drag_xy = Some((x, y));
+            if let Some((old_x, old_y)) = state.maybe_xy {
+                let distance = ((old_x - x) as f64).hypot((old_y - y) as f64) as i32;
+                if distance > XY_CIRCLE_RADIUS {
+                    state.maybe_drag_origin = Some((x, y));
+                }
+            } else {
+                state.maybe_drag_origin = Some((x, y));
+            }
+            state.maybe_xy = Some((x, y));
+            state.dragging = true;
         }
         highgui::EVENT_LBUTTONUP => {
-            state.maybe_drag_xy = None;
+            state.dragging = false;
         }
         _ => (),
     }
@@ -123,28 +110,121 @@ fn mouse_callback(state: &mut State, event: i32, x: i32, y: i32) -> opencv::Resu
     Ok(())
 }
 
+fn post_flood_fill(state: &mut State) -> opencv::Result<()> {
+    let Some((drag_x, drag_y)) = state.maybe_drag_origin else {
+        return Ok(());
+    };
+    let Some((x, y)) = state.maybe_xy else {
+        return Ok(());
+    };
+    imgproc::erode(
+        &state.grayscale_mask,
+        &mut state.eroded_grayscale_mask,
+        &state.erosion_kernel,
+        ERODE_DEF_ANCHOR,
+        2,
+        BORDER_CONSTANT,
+        imgproc::morphology_default_border_value()?,
+    )?;
+    if !opencv::core::has_non_zero(&Mat::roi(&state.eroded_grayscale_mask, state.mask_roi)?)? {
+        state.eroded_grayscale_mask = state.grayscale_mask.clone();
+    }
+
+    *state
+        .eroded_grayscale_mask
+        .at_2d_mut::<u8>(drag_y + 1, drag_x + 1)? = 255;
+
+    state.tmp_mask.set_to_def(&Scalar::all(0.0))?;
+    imgproc::flood_fill_mask(
+        &mut Mat::roi_mut(&mut state.eroded_grayscale_mask, state.mask_roi)?,
+        &mut state.tmp_mask,
+        Point::new(drag_x, drag_y),
+        Scalar::default(), // ignored
+        &mut Rect::default(),
+        Scalar::all(0.0),
+        Scalar::all(0.0),
+        4 | FLOODFILL_FIXED_RANGE | FLOODFILL_MASK_ONLY | (255 << 8),
+    )?;
+    std::mem::swap(&mut state.eroded_grayscale_mask, &mut state.tmp_mask);
+
+    let eroded_grayscale_mask_cropped = Mat::roi(&state.eroded_grayscale_mask, state.mask_roi)?;
+    let channels = opencv::core::Vector::<Mat>::from_iter([
+        eroded_grayscale_mask_cropped.clone_pointee(),
+        Mat::zeros(state.img.rows(), state.img.cols(), CV_8UC1)?.to_mat()?,
+        eroded_grayscale_mask_cropped.clone_pointee(),
+    ]);
+    opencv::core::merge(&channels, &mut state.colored_eroded_mask_cropped)?;
+
+    opencv::core::add_def(
+        &state.img,
+        &state.colored_eroded_mask_cropped,
+        &mut state.displayed_img,
+    )?;
+    imgproc::line(
+        &mut state.displayed_img,
+        Point::new(drag_x, drag_y),
+        Point::new(x, y),
+        Scalar::all(255.0),
+        3,
+        LINE_8,
+        0,
+    )?;
+    imgproc::circle(
+        &mut state.displayed_img,
+        Point::new(x, y),
+        XY_CIRCLE_RADIUS,
+        Scalar::all(255.0),
+        FILLED,
+        LINE_8,
+        0,
+    )?;
+    imgproc::circle(
+        &mut state.displayed_img,
+        Point::new(x, y),
+        XY_CIRCLE_RADIUS / 2,
+        Scalar::from((0, 0, 255)),
+        FILLED,
+        LINE_8,
+        0,
+    )?;
+    highgui::imshow(WINDOW_NAME, &state.displayed_img)?;
+    Ok(())
+}
+
+fn erosion_kernel_trackbar_callback(state: &mut State, pos: i32) -> opencv::Result<()> {
+    state.erosion_kernel =
+        imgproc::get_structuring_element_def(imgproc::MORPH_DIAMOND, Size::new(pos, pos))?;
+    post_flood_fill(state)?;
+    Ok(())
+}
+
 fn main() -> opencv::Result<()> {
     highgui::named_window(WINDOW_NAME, highgui::WINDOW_AUTOSIZE)?;
 
     let img = imgcodecs::imread("input.png", imgcodecs::IMREAD_COLOR)?;
-    let displayed_img = Mat::zeros(img.rows(), img.cols(), img.typ())?.to_mat()?;
+    let displayed_img = Mat::zeros(img.rows(), img.cols(), CV_8UC3)?.to_mat()?;
+    let colored_eroded_mask_cropped = displayed_img.clone();
     let grayscale_mask = Mat::zeros(img.rows() + 2, img.cols() + 2, CV_8UC1)?.to_mat()?;
-    let eroded_mask = grayscale_mask.clone();
+    let eroded_grayscale_mask = grayscale_mask.clone();
+    let tmp_mask = grayscale_mask.clone();
     let mask_roi = Rect::new(1, 1, img.cols(), img.rows());
-    let erosion_kernel =
-        imgproc::get_structuring_element_def(imgproc::MORPH_DIAMOND, Size::new(5, 5))?;
+    let erosion_kernel = Mat::default();
 
     highgui::imshow(WINDOW_NAME, &img)?;
 
     let state = Arc::new(Mutex::new(State {
         img,
         grayscale_mask,
-        eroded_mask,
+        eroded_grayscale_mask,
         erosion_kernel,
+        colored_eroded_mask_cropped,
         mask_roi,
+        tmp_mask,
         displayed_img,
         upper_flood_fill_diff: 20,
-        maybe_drag_xy: None,
+        maybe_drag_origin: None,
+        maybe_xy: None,
+        dragging: false,
         err: None,
     }));
     {
@@ -158,6 +238,23 @@ fn main() -> opencv::Result<()> {
                 }
             })),
         )?;
+    }
+    {
+        let state = Arc::clone(&state);
+        highgui::create_trackbar(
+            EROSION_SIZE_TRACKBAR_NAME,
+            WINDOW_NAME,
+            None,
+            20,
+            Some(Box::new(move |pos| {
+                let mut state = state.lock().unwrap();
+                if let Err(e) = erosion_kernel_trackbar_callback(&mut state, pos) {
+                    state.err = Some(e);
+                }
+            })),
+        )?;
+        highgui::set_trackbar_pos(EROSION_SIZE_TRACKBAR_NAME, WINDOW_NAME, 5)?;
+        highgui::set_trackbar_min(EROSION_SIZE_TRACKBAR_NAME, WINDOW_NAME, 1)?;
     }
 
     loop {
