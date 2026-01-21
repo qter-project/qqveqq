@@ -11,14 +11,14 @@ use std::{
 
 const WINDOW_NAME: &str = "Qvis Sticker Calibration";
 const EROSION_SIZE_TRACKBAR_NAME: &str = "Erosion size";
-const EROSION_SIZE_TRACKBAR_MINDEFMAX: [i32; 3] = [1, 5, 30];
+const EROSION_SIZE_TRACKBAR_MINDEFMAX: [i32; 3] = [1, 4, 30];
 const UPPER_DIFF_TRACKBAR_NAME: &str = "Upper diff";
 const UPPER_DIFF_TRACKBAR_MINDEFMAX: [i32; 3] = [0, 2, 5];
 const EROSION_KERNEL_MORPH_SHAPE: i32 = MORPH_ELLIPSE;
 const ERODE_DEF_ANCHOR: Point = Point::new(-1, -1);
 const XY_CIRCLE_RADIUS: i32 = 10;
 const MAX_PIXEL_VALUE: i32 = 255;
-const MAX_PIXELS: i32 = 600_000;
+const MAX_PIXELS: i32 = 500_000;
 
 #[derive(Default)]
 struct State {
