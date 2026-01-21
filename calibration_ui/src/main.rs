@@ -37,7 +37,6 @@ struct State {
     maybe_xy: Option<(i32, i32)>,
     dragging: bool,
     err: Option<opencv::Error>,
-    dimensions: (i32, i32),
 }
 
 fn c(x: i32, n: i32) -> i32 {
@@ -228,30 +227,6 @@ fn overlay_flood_fill(state: &mut State) -> opencv::Result<()> {
         LINE_8,
         0,
     )?;
-    let mut tmp = Mat::default();
-    let dimensions_preserve_aspect_ratio = {
-        let (img_w, img_h) = (state.displayed_img.cols(), state.displayed_img.rows());
-        let (win_w, win_h) = state.dimensions;
-        let img_aspect_ratio = img_w as f64 / img_h as f64;
-        let win_aspect_ratio = win_w as f64 / win_h as f64;
-
-        if img_aspect_ratio > win_aspect_ratio {
-            (win_w, (win_w as f64 / img_aspect_ratio).round() as i32)
-        } else {
-            ((win_h as f64 * img_aspect_ratio).round() as i32, win_h)
-        }
-    };
-    imgproc::resize(
-        &state.displayed_img,
-        &mut tmp,
-        Size::new(
-            dimensions_preserve_aspect_ratio.0,
-            dimensions_preserve_aspect_ratio.1,
-        ),
-        0.0,
-        0.0,
-        imgproc::INTER_LINEAR,
-    )?;
     highgui::imshow(WINDOW_NAME, &state.displayed_img)?;
     Ok(())
 }
@@ -283,8 +258,6 @@ fn main() -> opencv::Result<()> {
         highgui::WND_PROP_FULLSCREEN,
         highgui::WINDOW_FULLSCREEN as f64,
     )?;
-    let a = highgui::get_window_image_rect(WINDOW_NAME)?;
-    dbg!(a);
 
     let mut img = imgcodecs::imread_def("input.jpg")?;
 
@@ -394,11 +367,6 @@ fn main() -> opencv::Result<()> {
     }
 
     highgui::imshow(WINDOW_NAME, &state.lock().unwrap().img)?;
-    let window_rect = highgui::get_window_image_rect(WINDOW_NAME)?;
-    {
-        let mut state = state.lock().unwrap();
-        state.dimensions = (window_rect.width, window_rect.height);
-    }
 
     loop {
         if let Some(err) = state.lock().unwrap().err.take() {
