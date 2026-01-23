@@ -15,6 +15,7 @@ pub struct CVProcessor {
     inference: Inference,
 }
 
+#[derive(Debug)]
 pub enum Pixel {
     /// The pixel is not assigned to anything
     Unassigned,

@@ -107,7 +107,8 @@ fn overlay_flood_fill(state: &mut State) -> opencv::Result<()> {
     //
     // multiply it again by 20 to increase the periodicity
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let angle = (f64::from(y - drag_y).atan2(f64::from(x - drag_x)) + PI * 360.0 / PI * 20.0) as u16;
+    let angle =
+        (f64::from(y - drag_y).atan2(f64::from(x - drag_x)) + PI * 360.0 / PI * 20.0) as u16;
     let perm6 = perm6_from_number(angle);
 
     Mat::roi_mut(&mut state.grayscale_mask, state.mask_roi)?.set_to_def(&Scalar::all(0.0))?;
@@ -254,9 +255,9 @@ fn light_tolerance_trackbar_callback(state: &mut State, pos: i32) -> opencv::Res
 
 /// Displays a UI for calibrating the sticker detection parameters. Returns the
 /// calibrated pixels on success.
-/// 
+///
 /// # Errors
-/// 
+///
 /// This function will return an `OpenCV` error.
 pub fn calibration_ui(puzzle_geometry: Arc<PuzzleGeometry>) -> Result<Box<[Pixel]>, opencv::Error> {
     highgui::named_window(
@@ -384,7 +385,6 @@ pub fn calibration_ui(puzzle_geometry: Arc<PuzzleGeometry>) -> Result<Box<[Pixel
     #[allow(clippy::missing_panics_doc)]
     highgui::imshow(WINDOW_NAME, &state.lock().unwrap().img)?;
 
-    dbg!(1);
     loop {
         #[allow(clippy::missing_panics_doc)]
         if let Some(err) = state.lock().unwrap().err.take() {

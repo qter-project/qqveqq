@@ -3,12 +3,12 @@ use leptos::{
     server_fn::codec::{GetUrl, Json},
 };
 use log::warn;
-use puzzle_theory::{permutations::Permutation, puzzle_geometry::parsing::puzzle};
+use puzzle_theory::permutations::Permutation;
+use qvis::Pixel;
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ssr")]
 mod ssr_imports {
-    pub use crate::calibration_ui;
     pub use leptos::logging::log;
     pub use leptos_ws::ChannelSignal;
     pub use std::sync::Mutex;
@@ -34,21 +34,39 @@ pub async fn take_picture() -> Result<Permutation, ServerFnError> {
     use ssr_imports::*;
 
     let channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).map_err(ServerFnError::new)?;
+    let calibration_ui_tx =
+        use_context::<std::sync::mpsc::Sender<tokio::sync::oneshot::Sender<Box<[Pixel]>>>>()
+            .unwrap();
 
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    let tx = Mutex::new(Some(tx));
+    let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+    let response_tx = Mutex::new(Some(response_tx));
 
     channel
         .on_server(move |message: &TakePictureMessage| {
             log!("Recieved message {message:#?}");
             match message {
                 TakePictureMessage::PermutationResult(permutation) => {
-                    let sender = tx.lock().unwrap().take().expect("No sender available");
-                    sender.send(permutation.clone()).unwrap();
+                    response_tx.lock().unwrap().take().expect("Expected to send only one response").send(permutation.clone()).unwrap();
                 }
                 TakePictureMessage::NeedsCalibration => {
-                    let puzzle_geometry = puzzle("3x3").into_inner();
-                    calibration_ui::calibration_ui(puzzle_geometry).unwrap();
+                    let calibration_ui_tx = calibration_ui_tx.clone();
+                    let response_tx = response_tx
+                        .lock()
+                        .unwrap()
+                        .take()
+                        .expect("Expected to send only one response");
+
+                    tokio::task::spawn(async move {
+                        let (calibration_done_tx, calibration_done_rx) = tokio::sync::oneshot::channel();
+
+                        calibration_ui_tx
+                            .send(calibration_done_tx)
+                            .unwrap();
+                        let assignment = calibration_done_rx.await.unwrap();
+                        response_tx
+                            .send(todo!())
+                            .unwrap();
+                    });
                 }
                 TakePictureMessage::TakePicture => {
                     warn!("Received TakePictureMessage::TakePicture on server, which should not happen");
@@ -61,5 +79,5 @@ pub async fn take_picture() -> Result<Permutation, ServerFnError> {
         .send_message(TakePictureMessage::TakePicture)
         .map_err(ServerFnError::new)?;
 
-    rx.await.map_err(ServerFnError::new)
+    response_rx.await.map_err(ServerFnError::new)
 }

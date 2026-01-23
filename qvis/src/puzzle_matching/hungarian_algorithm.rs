@@ -138,7 +138,11 @@ fn toggle_augmenting_path(mut endpoint: usize, data: &mut [Element]) {
 /// Relax the potentials along the path to make at least one more edge tight
 ///
 /// Returns whether anything was able to be relaxed
-fn relax_potentials(data: &mut [Element], is_tight: &mut ArrayRef2<bool>, costs: &ArrayRef2<Option<f64>>) -> bool {
+fn relax_potentials(
+    data: &mut [Element],
+    is_tight: &mut ArrayRef2<bool>,
+    costs: &ArrayRef2<Option<f64>>,
+) -> bool {
     let Some(((i, j), δ)) = costs
         .indexed_iter()
         .filter_map(|(idxs, v)| v.map(|v| (idxs, v)))
@@ -211,88 +215,91 @@ mod tests {
 
     #[test]
     fn tightness_not_through_epsilon() {
-        // This matching leads to the relaxing of potentials not working properly due to floating point rounding error because the precise value of the tightness is never close enough to zero to be considered zero under ε=1e-9. The solution is to keep track of tightness in a separate array. 
-        assert_eq!(maximum_matching(&array![
-            [
-                Some(3052265.763914855),
-                Some(3051048.084988203),
-                Some(45.073006316285735),
-                Some(1294345.8137656434),
-                Some(5898072.435256591),
-                Some(3052675.829981847),
-                Some(1552774.9128819676),
-                Some(1552728.4503640207)
-            ],
-            [
-                Some(1156951.093342854),
-                Some(1.134599964850414),
-                Some(7649154.094641632),
-                Some(555734.4444284381),
-                Some(1157008.9535065796),
-                Some(7649155.83921888),
-                Some(7649157.015021505),
-                Some(60.438339297708175)
-            ],
-            [
-                Some(5319458.202466325),
-                Some(926169.1991026127),
-                Some(926220.7540678747),
-                Some(4295463.453554934),
-                Some(4295465.153555874),
-                Some(97878.14460299305),
-                Some(704.6096895474138),
-                Some(4295464.157698463)
-            ],
-            [
-                Some(63461.42078957725),
-                Some(36361925.9918591),
-                Some(47703556.83654001),
-                Some(11278226.089127451),
-                Some(52.97836939994223),
-                Some(36361927.55345198),
-                Some(36361925.568258174),
-                Some(11278278.652790288)
-            ],
-            [
-                Some(7517468.676308601),
-                Some(7517450.04143544),
-                Some(18214.102036218326),
-                Some(4310.718371037171),
-                Some(51338675.91309436),
-                Some(58874333.48451123),
-                Some(51338675.4767505),
-                Some(51338699.67340185)
-            ],
-            [
-                Some(1147.390857123671),
-                Some(6201064.561333844),
-                Some(40616550.60643597),
-                Some(40616608.0936402),
-                Some(591904.5930478168),
-                Some(6201064.099499533),
-                Some(47409452.10109716),
-                Some(40617694.52826714)
-            ],
-            [
-                Some(2676939.97975629),
-                Some(1677575.6585671527),
-                Some(2651885.0775300157),
-                Some(7006362.661739242),
-                Some(2676942.307682288),
-                Some(461.4718209297044),
-                Some(2651920.0537068467),
-                Some(2676938.803695033)
-            ],
-            [
-                Some(575002.1259626774),
-                Some(92.45961702099193),
-                Some(439769.85429266735),
-                Some(575000.5004559389),
-                Some(8948930.829434488),
-                Some(8949021.402547736),
-                Some(8948930.640305543),
-                Some(9963609.14817566)
-            ]
-        ]), Some(vec![4, 1, 0, 2, 5, 6, 3, 7]));
+        // This matching leads to the relaxing of potentials not working properly due to floating point rounding error because the precise value of the tightness is never close enough to zero to be considered zero under ε=1e-9. The solution is to keep track of tightness in a separate array.
+        assert_eq!(
+            maximum_matching(&array![
+                [
+                    Some(3052265.763914855),
+                    Some(3051048.084988203),
+                    Some(45.073006316285735),
+                    Some(1294345.8137656434),
+                    Some(5898072.435256591),
+                    Some(3052675.829981847),
+                    Some(1552774.9128819676),
+                    Some(1552728.4503640207)
+                ],
+                [
+                    Some(1156951.093342854),
+                    Some(1.134599964850414),
+                    Some(7649154.094641632),
+                    Some(555734.4444284381),
+                    Some(1157008.9535065796),
+                    Some(7649155.83921888),
+                    Some(7649157.015021505),
+                    Some(60.438339297708175)
+                ],
+                [
+                    Some(5319458.202466325),
+                    Some(926169.1991026127),
+                    Some(926220.7540678747),
+                    Some(4295463.453554934),
+                    Some(4295465.153555874),
+                    Some(97878.14460299305),
+                    Some(704.6096895474138),
+                    Some(4295464.157698463)
+                ],
+                [
+                    Some(63461.42078957725),
+                    Some(36361925.9918591),
+                    Some(47703556.83654001),
+                    Some(11278226.089127451),
+                    Some(52.97836939994223),
+                    Some(36361927.55345198),
+                    Some(36361925.568258174),
+                    Some(11278278.652790288)
+                ],
+                [
+                    Some(7517468.676308601),
+                    Some(7517450.04143544),
+                    Some(18214.102036218326),
+                    Some(4310.718371037171),
+                    Some(51338675.91309436),
+                    Some(58874333.48451123),
+                    Some(51338675.4767505),
+                    Some(51338699.67340185)
+                ],
+                [
+                    Some(1147.390857123671),
+                    Some(6201064.561333844),
+                    Some(40616550.60643597),
+                    Some(40616608.0936402),
+                    Some(591904.5930478168),
+                    Some(6201064.099499533),
+                    Some(47409452.10109716),
+                    Some(40617694.52826714)
+                ],
+                [
+                    Some(2676939.97975629),
+                    Some(1677575.6585671527),
+                    Some(2651885.0775300157),
+                    Some(7006362.661739242),
+                    Some(2676942.307682288),
+                    Some(461.4718209297044),
+                    Some(2651920.0537068467),
+                    Some(2676938.803695033)
+                ],
+                [
+                    Some(575002.1259626774),
+                    Some(92.45961702099193),
+                    Some(439769.85429266735),
+                    Some(575000.5004559389),
+                    Some(8948930.829434488),
+                    Some(8949021.402547736),
+                    Some(8948930.640305543),
+                    Some(9963609.14817566)
+                ]
+            ]),
+            Some(vec![4, 1, 0, 2, 5, 6, 3, 7])
+        );
     }
 }

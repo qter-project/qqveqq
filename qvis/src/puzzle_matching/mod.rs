@@ -37,10 +37,7 @@ impl Matcher {
         }
     }
 
-    pub fn most_likely(
-        &self,
-        confidences: &[HashMap<ArcIntern<str>, f64>],
-    ) -> (Permutation, f64) {
+    pub fn most_likely(&self, confidences: &[HashMap<ArcIntern<str>, f64>]) -> (Permutation, f64) {
         let iters = self
             .orbits
             .iter()
@@ -298,9 +295,7 @@ impl OrbitMatcher {
             cache: None,
             facelet_count: self.puzzle.permutation_group().facelet_count(),
         }
-        .dedup_by(|a, b| {
-            a.0 == b.0
-        })
+        .dedup_by(|a, b| a.0 == b.0)
         .filter(|(perm, _)| self.stab_chain.is_member(perm.clone()))
     }
 }
@@ -463,10 +458,8 @@ impl Ord for OrbitHeapElt {
 
         match self.log_likelihood.total_cmp(&other.log_likelihood) {
             // Break ties
-            Ordering::Equal => {
-                self.matching.cmp(&other.matching)
-            },
-            v => v
+            Ordering::Equal => self.matching.cmp(&other.matching),
+            v => v,
         }
     }
 }

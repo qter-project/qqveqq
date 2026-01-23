@@ -50,9 +50,7 @@ pub fn App() -> impl IntoView {
     let take_picture = move |_| set_take_picture.set(());
 
     let take_picture_resp = Callback::new(move |resp| {
-        take_picture_channel2
-            .send_message(resp)
-            .unwrap();
+        take_picture_channel2.send_message(resp).unwrap();
     });
 
     take_picture_channel

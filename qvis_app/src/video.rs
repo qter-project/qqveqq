@@ -70,12 +70,12 @@ pub fn Video(
         move |(), _, _| {
             let canvas_ref = canvas_ref.get_untracked().unwrap();
             let video_ref = video_ref.get_untracked().unwrap();
-            
+
             let Some(ref cv) = cv else {
                 take_picture_resp.run(TakePictureMessage::NeedsCalibration);
                 return;
             };
-            
+
             if !enabled.get() {
                 set_enabled.set(true);
             }
