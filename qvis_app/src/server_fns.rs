@@ -22,7 +22,7 @@ pub enum TakePictureMessage {
     TakePicture,
     // Response
     PermutationResult(Permutation),
-    NeedsCalibration,
+    NeedsStickerAssignment,
 }
 
 #[server(
@@ -34,7 +34,7 @@ pub async fn take_picture() -> Result<Permutation, ServerFnError> {
     use ssr_imports::*;
 
     let channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).map_err(ServerFnError::new)?;
-    let calibration_ui_tx =
+    let pixel_assignment_ui_tx =
         use_context::<std::sync::mpsc::Sender<tokio::sync::oneshot::Sender<Box<[Pixel]>>>>()
             .unwrap();
 
@@ -48,26 +48,26 @@ pub async fn take_picture() -> Result<Permutation, ServerFnError> {
                 TakePictureMessage::PermutationResult(permutation) => {
                     response_tx.lock().unwrap().take().expect("Expected to send only one response").send(permutation.clone()).unwrap();
                 }
-                TakePictureMessage::NeedsCalibration => {
-                    // let calibration_ui_tx = calibration_ui_tx.clone();
-                    // let response_tx = response_tx
-                    //     .lock()
-                    //     .unwrap()
-                    //     .take()
-                    //     .expect("Expected to send only one response");
+                TakePictureMessage::NeedsStickerAssignment => {
+                    let pixel_assignment_ui_tx = pixel_assignment_ui_tx.clone();
+                    let response_tx = response_tx
+                        .lock()
+                        .unwrap()
+                        .take()
+                        .expect("Expected to send only one response");
 
-                    // tokio::task::spawn(async move {
-                    //     let (calibration_done_tx, calibration_done_rx) = tokio::sync::oneshot::channel();
+                    tokio::task::spawn(async move {
+                        let (pixel_assignment_done_tx, pixel_assignment_done_rx) = tokio::sync::oneshot::channel();
 
-                    //     calibration_ui_tx
-                    //         .send(calibration_done_tx)
-                    //         .unwrap();
-                    //     let assignment = calibration_done_rx.await.unwrap();
-                    //     response_tx
-                    //         .send(todo!())
-                    //         .unwrap();
-                    // });
-                    todo!()
+                        pixel_assignment_ui_tx
+                            .send(pixel_assignment_done_tx)
+                            .unwrap();
+                        let pixel_assignment = pixel_assignment_done_rx.await.unwrap();
+                        response_tx
+                            .send(todo!())
+                            .unwrap();
+                    });
+                    // todo!()
                 }
                 TakePictureMessage::TakePicture => {
                     warn!("Received TakePictureMessage::TakePicture on server, which should not happen");
@@ -82,3 +82,10 @@ pub async fn take_picture() -> Result<Permutation, ServerFnError> {
 
     response_rx.await.map_err(ServerFnError::new)
 }
+
+// #[server(
+//   endpoint = "pixel_assignment",
+//   input = GetUrl,
+//   output = Json
+// )]
+// pub async fn pixel_assignment() -> Result<Permutation, ServerFnError> {

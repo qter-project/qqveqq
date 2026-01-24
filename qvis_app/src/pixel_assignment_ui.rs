@@ -11,7 +11,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-const WINDOW_NAME: &str = "Qvis Sticker Calibration";
+const WINDOW_NAME: &str = "Qvis Sticker Assignment";
 const EROSION_SIZE_TRACKBAR_NAME: &str = "Erosion size";
 const EROSION_SIZE_TRACKBAR_MINDEFMAX: [i32; 3] = [1, 4, 30];
 const UPPER_DIFF_TRACKBAR_NAME: &str = "Upper diff";
@@ -253,13 +253,12 @@ fn light_tolerance_trackbar_callback(state: &mut State, pos: i32) -> opencv::Res
     Ok(())
 }
 
-/// Displays a UI for calibrating the sticker detection parameters. Returns the
-/// calibrated pixels on success.
+/// Displays a UI for assignment the stickers of a `PuzzleGeometry`
 ///
 /// # Errors
 ///
 /// This function will return an `OpenCV` error.
-pub fn calibration_ui(puzzle_geometry: Arc<PuzzleGeometry>) -> Result<Box<[Pixel]>, opencv::Error> {
+pub fn pixel_assignment_ui(puzzle_geometry: Arc<PuzzleGeometry>) -> Result<Box<[Pixel]>, opencv::Error> {
     highgui::named_window(
         WINDOW_NAME,
         highgui::WINDOW_NORMAL | highgui::WINDOW_KEEPRATIO | highgui::WINDOW_GUI_EXPANDED,

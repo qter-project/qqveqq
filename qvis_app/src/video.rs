@@ -72,7 +72,7 @@ pub fn Video(
             let video_ref = video_ref.get_untracked().unwrap();
 
             let Some(ref cv) = cv else {
-                take_picture_resp.run(TakePictureMessage::NeedsCalibration);
+                take_picture_resp.run(TakePictureMessage::NeedsStickerAssignment);
                 return;
             };
 

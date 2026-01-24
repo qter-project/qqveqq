@@ -7,7 +7,7 @@
 
 pub mod app;
 #[cfg(feature = "ssr")]
-pub mod calibration_ui;
+pub mod pixel_assignment_ui;
 pub mod server_fns;
 pub mod video;
 pub mod messages_logger;
