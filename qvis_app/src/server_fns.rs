@@ -63,6 +63,10 @@ pub async fn take_picture() -> Result<Permutation, ServerFnError> {
                             .send(pixel_assignment_done_tx)
                             .unwrap();
                         let pixel_assignment = pixel_assignment_done_rx.await.unwrap();
+                        std::fs::write(
+                            "pixel_assignment.txt",
+                            format!("{pixel_assignment:?}"),
+                        ).unwrap();
                         response_tx
                             .send(todo!())
                             .unwrap();

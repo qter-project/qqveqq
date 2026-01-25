@@ -114,15 +114,13 @@ fn main() {
     let (pixel_assignment_ui_tx, pixel_assignment_ui_rx) =
         std::sync::mpsc::channel::<tokio::sync::oneshot::Sender<Box<[Pixel]>>>();
 
-    thread::spawn(|| server_main(pixel_assignment_ui_tx));
+    thread::spawn(move || server_main(pixel_assignment_ui_tx));
 
-    // For some reason pixel assignment doesn't work unless it's on the main
-    // thread.
+    // For some reason highgui doesn't work unless it's on the main thread
     let puzzle_geometry = puzzle("3x3").into_inner();
     while let Ok(pixel_assignment_done_tx) = pixel_assignment_ui_rx.recv() {
         let puzzle_geometry = Arc::clone(&puzzle_geometry);
-        let assignment = pixel_assignment_ui::pixel_assignment_ui(puzzle_geometry)
-            .expect("OpenCV error during pixel assignment: ");
+        let assignment = pixel_assignment_ui::pixel_assignment_ui(&puzzle_geometry).unwrap();
         pixel_assignment_done_tx.send(assignment).unwrap();
     }
 }

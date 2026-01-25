@@ -44,8 +44,6 @@ pub fn App() -> impl IntoView {
     let (overflowing, set_overflowing) = signal(true);
     let (take_picture_command, set_take_picture) = signal(());
 
-    let take_picture = move |_| set_take_picture.set(());
-
     let take_picture_resp = Callback::new(move |resp| {
         take_picture_channel2.send_message(resp).unwrap();
     });
@@ -77,7 +75,6 @@ pub fn App() -> impl IntoView {
       </header>
       <main class="flex flex-col gap-4 justify-center mr-4 ml-4 text-center">
         <Video take_picture_resp take_picture_command />
-        <button on:click=take_picture>HERE</button>
         "Messages:"
         <div class="relative h-72 font-mono text-left border-2 border-gray-300">
           <div
