@@ -180,7 +180,7 @@ impl Inference {
 
         for (sticker, pixels) in self.pixels_by_sticker.iter_mut().enumerate() {
             let wb = *wb.get(&self.group.facelet_colors()[sticker]).unwrap();
-            let color = &self.group.facelet_colors()[state.comes_from().get(sticker)];
+            let color = &self.group.facelet_colors()[state.state().get(sticker)];
 
             for pixel in pixels {
                 let (r, g, b) = white_balance(image[pixel.idx], wb);
@@ -306,7 +306,7 @@ mod tests {
             for spot in 0..8 {
                 let idx = spot + face * 8;
 
-                let is = perm.comes_from().get(idx);
+                let is = perm.state().get(idx);
                 let mut color = *NATURAL_COLORS.get(&group.facelet_colors()[is]).unwrap();
                 color.0 *= white.0;
                 color.1 *= white.1;

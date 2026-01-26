@@ -218,7 +218,7 @@ impl OrbitMatcher {
                         .or_default();
                     pieces.push((i, ori));
 
-                    current_sticker = piece.twist().goes_to().get(current_sticker);
+                    current_sticker = piece.twist().mapping().get(current_sticker);
                 }
             }
         }
@@ -230,7 +230,7 @@ impl OrbitMatcher {
                 .generators()
                 .map(|(name, perm)| {
                     let new_perm = Permutation::from_mapping(
-                        perm.goes_to()
+                        perm.mapping()
                             .minimal()
                             .iter()
                             .enumerate()
@@ -836,7 +836,7 @@ mod tests {
 
         let mut expected_ll = 0.;
 
-        for (spot, is) in perm.comes_from().iter_infinite().enumerate().take(48) {
+        for (spot, is) in perm.state().iter_infinite().enumerate().take(48) {
             let color = &group.facelet_colors()[is];
             let v = observation[spot].get_mut(color).unwrap();
             *v += 100.;
