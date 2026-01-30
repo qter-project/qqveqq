@@ -23,7 +23,7 @@ args = ["reverse-proxy", "--to", ":3000"]
 
 [tasks.prod]
 condition = { profiles = [ "pi" ] }
-run_task = { name = ["pi-server", "pi-caddy"], parallel = true }
+run_task = { name = ["prod-server", "prod-caddy"], parallel = true }
 
 [tasks.prod-server]
 condition = { profiles = [ "pi" ] }
