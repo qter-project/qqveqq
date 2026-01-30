@@ -3,7 +3,7 @@ use internment::ArcIntern;
 use opencv::{
     core::{BORDER_CONSTANT, CV_8UC1, CV_8UC3, Point, Rect, Scalar, Size, Vec3b},
     highgui,
-    imgcodecs::{self, IMREAD_COLOR_BGR},
+    imgcodecs::{self, IMREAD_COLOR},
     imgproc::{self, FILLED, FLOODFILL_FIXED_RANGE, FLOODFILL_MASK_ONLY, LINE_8, MORPH_ELLIPSE},
     prelude::*,
 };
@@ -490,7 +490,7 @@ pub fn pixel_assignment_ui(
     // image: &DynamicImage,
     bytes: &Bytes,
 ) -> Result<Box<[Pixel]>, opencv::Error> {
-    let mut img = imgcodecs::imdecode(&&**bytes, IMREAD_COLOR_BGR)?;
+    let mut img = imgcodecs::imdecode(&&**bytes, IMREAD_COLOR)?;
 
     highgui::named_window(
         WINDOW_NAME,
