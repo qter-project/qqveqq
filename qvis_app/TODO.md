@@ -1,1 +1,2 @@
-- caddy reverse proxy
+- gui scale
+- todos in pixel_assignment

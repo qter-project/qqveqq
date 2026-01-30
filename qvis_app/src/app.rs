@@ -1,11 +1,13 @@
 use crate::{
     messages_logger::MessagesLogger,
-    server_fns::{TAKE_PICTURE_CHANNEL, TakePictureMessage},
+    server_fns::{TAKE_PICTURE_CHANNEL, TakePictureMessage, pixel_assignment},
     video::Video,
 };
 use leptos::prelude::*;
 use leptos_ws::ChannelSignal;
-use log::{LevelFilter, info};
+use log::{LevelFilter, info, warn};
+use qvis::Pixel;
+use web_sys::FormData;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
@@ -43,6 +45,7 @@ pub fn App() -> impl IntoView {
     let messages_container = NodeRef::<leptos::html::Div>::new();
     let (overflowing, set_overflowing) = signal(true);
     let (take_picture_command, set_take_picture) = signal(());
+    let (pixel_assignment_command, set_pixel_assignment) = signal(());
 
     let take_picture_resp = Callback::new(move |resp| {
         take_picture_channel2.send_message(resp).unwrap();
@@ -50,7 +53,7 @@ pub fn App() -> impl IntoView {
 
     take_picture_channel
         .on_client(move |msg: &TakePictureMessage| {
-            info!("Recieved message {msg:#?}");
+            info!("Recieved message {msg:?}");
             let TakePictureMessage::TakePicture = msg else {
                 return;
             };
@@ -58,28 +61,66 @@ pub fn App() -> impl IntoView {
         })
         .unwrap();
 
-    Effect::new(move |_| {
-        messages.get();
-        let Some(container) = messages_container.get() else {
-            return;
-        };
-        let scroll_height = container.scroll_height();
-        let client_height = container.client_height();
-        set_overflowing.set(scroll_height > client_height);
-        container.set_scroll_top(scroll_height);
-    });
+    let pixel_assignment_action =
+        Action::new_local(|data: &FormData| pixel_assignment(data.clone().into()));
+    let do_pixel_assignment = move |_| set_pixel_assignment.set(());
+
+    Effect::watch(
+        move || pixel_assignment_action.value().get(),
+        move |pixel_assignment, _, _| {
+            let Some(pixel_assignment) = pixel_assignment else {
+                return;
+            };
+            let pixel_assignment = match pixel_assignment {
+                Ok(pixels) => pixels,
+                Err(err) => {
+                    warn!("Pixel assignment failed: {err}");
+                    return;
+                }
+            };
+            let assigned = pixel_assignment
+                .iter()
+                .filter(|p| !matches!(p, Pixel::Unassigned))
+                .count();
+            info!("Assigned {}/{} pixels", assigned, pixel_assignment.len());
+        },
+        false,
+    );
+
+    Effect::watch(
+        move || messages.get(),
+        move |_, _, _| {
+            let Some(container) = messages_container.get_untracked() else {
+                return;
+            };
+            let scroll_height = container.scroll_height();
+            let client_height = container.client_height();
+            set_overflowing.set(scroll_height > client_height);
+            container.set_scroll_top(scroll_height);
+        },
+        false,
+    );
 
     view! {
       <header class="mb-5 font-sans text-4xl font-bold tracking-wider text-center bg-[rgb(47,48,80)] leading-20">
         "QVIS"
       </header>
       <main class="flex flex-col gap-4 justify-center mr-4 ml-4 text-center">
-        <Video take_picture_resp take_picture_command />
+        <Video take_picture_resp take_picture_command pixel_assignment_command pixel_assignment_action />
+        <button on:click=do_pixel_assignment>
+          {move || {
+            if pixel_assignment_action.pending().get() {
+              "Uploading capture...".to_string()
+            } else {
+              "Pixel assignment".to_string()
+            }
+          }}
+        </button>
         "Messages:"
         <div class="relative h-72 font-mono text-left border-2 border-gray-300">
           <div
             class:hidden=move || !overflowing.get()
-            class="absolute top-0 left-0 right-3 from-black to-transparent pointer-events-none h-15 bg-linear-to-b"
+            class="absolute top-0 left-0 right-3 h-5 from-black to-transparent pointer-events-none bg-linear-to-b"
           />
           <div
             node_ref=messages_container

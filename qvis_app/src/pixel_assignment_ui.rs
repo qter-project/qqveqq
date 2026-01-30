@@ -1,7 +1,9 @@
+use bytes::Bytes;
 use internment::ArcIntern;
 use opencv::{
     core::{BORDER_CONSTANT, CV_8UC1, CV_8UC3, Point, Rect, Scalar, Size, Vec3b},
-    highgui, imgcodecs,
+    highgui,
+    imgcodecs::{self, IMREAD_COLOR_BGR},
     imgproc::{self, FILLED, FLOODFILL_FIXED_RANGE, FLOODFILL_MASK_ONLY, LINE_8, MORPH_ELLIPSE},
     prelude::*,
 };
@@ -23,7 +25,7 @@ const EROSION_KERNEL_MORPH_SHAPE: i32 = MORPH_ELLIPSE;
 const DEF_ANCHOR: Point = Point::new(-1, -1);
 const XY_CIRCLE_RADIUS: i32 = 6;
 const MAX_PIXEL_VALUE: i32 = 255;
-const MAX_PIXEL_COUNT: i32 = 500_000 * 100;
+const MAX_PIXEL_COUNT: i32 = 300_000;
 const ERODE_UNTIL_PERCENT: (i32, i32) = (1, 3);
 const MIN_SAMPLES: i32 = 30;
 const NUM_QVIS_PIXELS: usize = 20;
@@ -38,6 +40,7 @@ struct State {
     img: Mat,
     tmp_mask: Mat,
     grayscale_mask: Mat,
+    samples: Vec<usize>,
     cleaned_grayscale_mask: Mat,
     eroded_grayscale_mask: Mat,
     erosion_kernel: Mat,
@@ -80,7 +83,6 @@ fn perm6_from_number(mut n: u16) -> [i32; 6] {
 fn update_display(state: &mut State) -> opencv::Result<()> {
     state.img.copy_to(&mut state.displayed_img)?;
     let ran;
-    let shuffled;
     let mut nonzeroes: Vec<usize>;
     if let Some((drag_origin_x, drag_origin_y)) = state.maybe_drag_origin
         && let Some((drag_x, drag_y)) = state.maybe_drag_xy
@@ -249,11 +251,25 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
         seed[0..4].copy_from_slice(&drag_origin_x.to_be_bytes());
         seed[4..8].copy_from_slice(&drag_origin_y.to_be_bytes());
         let mut rng = SmallRng::from_seed(seed);
+        // let cols = mask_to_randomly_sample.cols() as usize;
         nonzeroes = mask_to_randomly_sample
             .data_bytes()?
             .iter()
+            .copied()
+            // .skip(cols)
+            // .take(cols * (mask_to_randomly_sample.rows() as usize - 4))
             .enumerate()
-            .filter_map(|(i, &value)| {
+            // .filter_map(|(i, value)| {
+            //     let col = i % cols;
+            //     if col == 0 || col == 1 || col == cols - 1 || col == cols - 2 {
+            //         dbg!(i);
+            //         None
+            //     } else {
+            //         Some(value)
+            //     }
+            // })
+            // .enumerate()
+            .filter_map(|(i, value)| {
                 if value == u8::try_from(MAX_PIXEL_VALUE).unwrap() {
                     Some(i)
                 } else {
@@ -261,7 +277,10 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
                 }
             })
             .collect();
-        shuffled = nonzeroes.partial_shuffle(&mut rng, NUM_QVIS_PIXELS).0;
+        state.samples = nonzeroes
+            .partial_shuffle(&mut rng, NUM_QVIS_PIXELS)
+            .0
+            .to_vec();
 
         imgproc::line(
             &mut state.displayed_img,
@@ -292,7 +311,7 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
         )?;
     } else {
         ran = false;
-        shuffled = &mut [];
+        state.samples.clear();
     }
     imgproc::put_text(
         &mut state.displayed_img,
@@ -352,7 +371,7 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
         // dbg!(cols);
         // dbg!(state.img.rows() as usize + 1);
         // dbg!(&state.samples);
-        for i in shuffled.iter().copied() {
+        for i in state.samples.iter().copied() {
             // dbg!(i, cols);
             // let row = i / (cols + 0);
             // let num_padding_pixels = 2 + 4 * (row - 3);
@@ -407,6 +426,7 @@ fn submit_button_callback(state: &mut State) -> opencv::Result<()> {
     let h = cleaned_grayscale_mask_cropped.rows();
     let w = cleaned_grayscale_mask_cropped.cols();
     let mut count = 0;
+    // TODO: CHANGE
     for y in 0..h {
         for x in 0..w {
             let value = *cleaned_grayscale_mask_cropped.at_2d::<u8>(y, x)?;
@@ -427,9 +447,10 @@ fn submit_button_callback(state: &mut State) -> opencv::Result<()> {
     state.current_sticker_idx += 1;
     if state.current_sticker_idx == state.work.len() {
         state.ui = UIState::Finished;
+    } else {
+        state.maybe_drag_origin = None;
+        update_display(state)?;
     }
-    state.maybe_drag_origin = None;
-    update_display(state)?;
 
     Ok(())
 }
@@ -466,16 +487,19 @@ fn toggle_dragging(state: &mut State) {
 /// This function will return an `OpenCV` error.
 pub fn pixel_assignment_ui(
     puzzle_geometry: &PuzzleGeometry,
+    // image: &DynamicImage,
+    bytes: &Bytes,
 ) -> Result<Box<[Pixel]>, opencv::Error> {
+    let mut img = imgcodecs::imdecode(&&**bytes, IMREAD_COLOR_BGR)?;
+
     highgui::named_window(
         WINDOW_NAME,
         highgui::WINDOW_NORMAL | highgui::WINDOW_KEEPRATIO | highgui::WINDOW_GUI_EXPANDED,
     )?;
 
-    let mut img = imgcodecs::imread_def("input.jpg")?;
-
     let w = img.cols();
     let h = img.rows();
+    dbg!(w, h);
     let mut pixel_count = w * h;
 
     if pixel_count > MAX_PIXEL_COUNT {
@@ -522,6 +546,7 @@ pub fn pixel_assignment_ui(
         tmp_mask,
         grayscale_mask,
         cleaned_grayscale_mask,
+        samples: Vec::with_capacity(NUM_QVIS_PIXELS),
         eroded_grayscale_mask,
         erosion_kernel,
         erosion_kernel_times_two,
@@ -634,11 +659,12 @@ pub fn pixel_assignment_ui(
             let state = state.lock().unwrap();
             match &state.ui {
                 UIState::Finished => {
-                    highgui::destroy_all_windows()?;
+                    highgui::destroy_window(WINDOW_NAME)?;
+                    leptos::logging::log!("Finished pixel assignment UI");
                     break Ok(state.pixel_assignment.clone());
                 }
                 UIState::OpenCVError(e) => {
-                    highgui::destroy_all_windows()?;
+                    highgui::destroy_window(WINDOW_NAME)?;
                     break Err(opencv::Error::new(
                         e.code,
                         format!("OpenCV error during pixel assignment: {}", e.message),

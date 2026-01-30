@@ -16,6 +16,7 @@ pub struct CVProcessor {
 }
 
 #[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Pixel {
     /// The pixel is not assigned to anything
     Unassigned,

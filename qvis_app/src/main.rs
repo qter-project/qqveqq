@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Response as AxumResponse},
     routing::{get, post},
 };
+use bytes::Bytes;
 use leptos::{logging::log, prelude::*};
 use leptos_axum::{
     AxumRouteListing, LeptosRoutes, file_and_error_handler_with_context,
@@ -26,7 +27,8 @@ pub struct AppState {
     server_signals: WsSignals,
     routes: Option<Vec<AxumRouteListing>>,
     options: LeptosOptions,
-    pixel_assignment_ui_tx: std::sync::mpsc::Sender<tokio::sync::oneshot::Sender<Box<[Pixel]>>>,
+    pixel_assignment_ui_tx:
+        std::sync::mpsc::Sender<(tokio::sync::oneshot::Sender<Box<[Pixel]>>, Bytes)>,
 }
 
 async fn server_fn_handler(
@@ -63,7 +65,10 @@ async fn leptos_routes_handler(state: State<AppState>, req: Request<AxumBody>) -
 
 #[tokio::main]
 async fn server_main(
-    pixel_assignment_ui_tx: std::sync::mpsc::Sender<tokio::sync::oneshot::Sender<Box<[Pixel]>>>,
+    pixel_assignment_ui_tx: std::sync::mpsc::Sender<(
+        tokio::sync::oneshot::Sender<Box<[Pixel]>>,
+        Bytes,
+    )>,
 ) {
     let conf = get_configuration(None).unwrap();
     let leptos_options = conf.leptos_options;
@@ -108,14 +113,15 @@ async fn server_main(
 
 fn main() {
     let (pixel_assignment_ui_tx, pixel_assignment_ui_rx) =
-        std::sync::mpsc::channel::<tokio::sync::oneshot::Sender<Box<[Pixel]>>>();
+        std::sync::mpsc::channel::<(tokio::sync::oneshot::Sender<Box<[Pixel]>>, Bytes)>();
 
     thread::spawn(move || server_main(pixel_assignment_ui_tx));
 
     // For some reason highgui doesn't work unless it's on the main thread
     let puzzle_geometry = puzzle("3x3").into_inner();
-    while let Ok(pixel_assignment_done_tx) = pixel_assignment_ui_rx.recv() {
-        let assignment = pixel_assignment_ui::pixel_assignment_ui(&puzzle_geometry).unwrap();
+    while let Ok((pixel_assignment_done_tx, image)) = pixel_assignment_ui_rx.recv() {
+        let assignment =
+            pixel_assignment_ui::pixel_assignment_ui(&puzzle_geometry, &image).unwrap();
         pixel_assignment_done_tx.send(assignment).unwrap();
     }
 }

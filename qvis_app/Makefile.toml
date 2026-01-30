@@ -21,16 +21,16 @@ condition = { profiles = [ "mac" ] }
 command = "caddy"
 args = ["reverse-proxy", "--to", ":3000"]
 
-[tasks.pi]
+[tasks.prod]
 condition = { profiles = [ "pi" ] }
 run_task = { name = ["pi-server", "pi-caddy"], parallel = true }
 
-[tasks.pi-server]
+[tasks.prod-server]
 condition = { profiles = [ "pi" ] }
 command = "cargo"
 args = ["leptos", "serve"]
 
-[tasks.pi-caddy]
+[tasks.prod-caddy]
 condition = { profiles = [ "pi" ] }
 command = "caddy"
 args = ["reverse-proxy", "--from", "192.168.191.3", "--to", ":3000"]
