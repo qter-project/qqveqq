@@ -1,12 +1,14 @@
 use crate::{
     messages_logger::MessagesLogger,
     server_fns::{TAKE_PICTURE_CHANNEL, TakePictureMessage, pixel_assignment},
-    video::Video,
+    video::{Video, pixel_assignment_command, take_picture_command},
 };
-use leptos::prelude::*;
+use leptos::{html, prelude::*, task::spawn_local};
 use leptos_ws::ChannelSignal;
 use log::{LevelFilter, info, warn};
-use qvis::Pixel;
+use puzzle_theory::puzzle_geometry::parsing::puzzle;
+use qvis::{CVProcessor, Pixel};
+use std::sync::Arc;
 use web_sys::FormData;
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
@@ -38,54 +40,106 @@ pub fn App() -> impl IntoView {
     }
 
     leptos_ws::provide_websocket();
+    // #[cfg(feature = "hydrate")]
+    // {
+    //     use leptos_ws::ServerSignalWebSocket;
+    //     let context = expect_context::<ServerSignalWebSocket>();
+    //     context.set_on_connect(move || {
+    //         info!("Established connection with server");
+    //     });
+    //     context.set_on_disconnect(move || {
+    //         warn!("Lost connection with server");
+    //     });
+    //     context.set_on_reconnect(move || {
+    //         info!("Re-established connection with server");
+    //     });
+    // }
+
+    let messages_container = NodeRef::<leptos::html::Div>::new();
+    let (overflowing, set_overflowing) = signal(true);
+    let puzzle_geometry = puzzle("3x3").into_inner();
+    let video_ref = NodeRef::<html::Video>::new();
+    let canvas_ref = NodeRef::<html::Canvas>::new();
+    let (tx, rx) = tokio::sync::watch::channel(None::<CVProcessor>);
 
     let take_picture_channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).unwrap();
     let take_picture_channel2 = take_picture_channel.clone();
 
-    let messages_container = NodeRef::<leptos::html::Div>::new();
-    let (overflowing, set_overflowing) = signal(true);
-    let (take_picture_command, set_take_picture) = signal(());
-    let (pixel_assignment_command, set_pixel_assignment) = signal(());
-
-    let take_picture_resp = Callback::new(move |resp| {
-        take_picture_channel2.send_message(resp).unwrap();
-    });
-
-    take_picture_channel
-        .on_client(move |msg: &TakePictureMessage| {
-            info!("Recieved message {msg:?}");
-            let TakePictureMessage::TakePicture = msg else {
-                return;
-            };
-            set_take_picture.set(());
-        })
-        .unwrap();
-
     let pixel_assignment_action =
         Action::new_local(|data: &FormData| pixel_assignment(data.clone().into()));
-    let do_pixel_assignment = move |_| set_pixel_assignment.set(());
 
-    Effect::watch(
-        move || pixel_assignment_action.value().get(),
-        move |pixel_assignment, _, _| {
-            let Some(pixel_assignment) = pixel_assignment else {
-                return;
-            };
-            let pixel_assignment = match pixel_assignment {
-                Ok(pixels) => pixels,
-                Err(err) => {
-                    warn!("Pixel assignment failed: {err}");
+    let do_pixel_assignment = move || {
+        let video_ref = video_ref.get_untracked().unwrap();
+        let canvas_ref = canvas_ref.get_untracked().unwrap();
+        spawn_local(async move {
+            let blob = match pixel_assignment_command(&video_ref, &canvas_ref).await {
+                Ok(blob) => blob,
+                Err(e) => {
+                    warn!("Failed to capture image: {e:?}");
                     return;
                 }
             };
-            let assigned = pixel_assignment
-                .iter()
-                .filter(|p| !matches!(p, Pixel::Unassigned))
-                .count();
-            info!("Assigned {}/{} pixels", assigned, pixel_assignment.len());
-        },
-        false,
-    );
+            let form_data = FormData::new().unwrap();
+            form_data.append_with_blob("qvis_picture", &blob).unwrap();
+            pixel_assignment_action.dispatch_local(form_data);
+        });
+    };
+
+    take_picture_channel
+        .on_client(move |msg: &TakePictureMessage| {
+            let video_ref = video_ref.get_untracked().unwrap();
+            let canvas_ref = canvas_ref.get_untracked().unwrap();
+            info!("Received message {msg:?}");
+            let TakePictureMessage::TakePicture = msg else {
+                return;
+            };
+
+            let pixels = take_picture_command(&video_ref, &canvas_ref);
+            let take_picture_channel2 = take_picture_channel2.clone();
+            let mut rx = rx.clone();
+
+            spawn_local(async move {
+                if rx.borrow().is_none() {
+                    do_pixel_assignment();
+                    rx.changed().await.unwrap();
+                }
+                let cv_processor = rx.borrow();
+                let cv_processor = cv_processor.as_ref().unwrap();
+                let permutation = cv_processor.process_image(pixels).0;
+                take_picture_channel2
+                    .send_message(TakePictureMessage::PermutationResult(permutation))
+                    .unwrap();
+            });
+        })
+        .unwrap();
+
+    Effect::new(move |_| {
+        let pixel_assignment = pixel_assignment_action.value().get();
+        let Some(pixel_assignment) = pixel_assignment else {
+            return;
+        };
+        let pixel_assignment = match pixel_assignment {
+            Ok(pixels) => pixels,
+            Err(err) => {
+                warn!("Pixel assignment failed: {err}");
+                return;
+            }
+        };
+        let assigned = pixel_assignment
+            .iter()
+            .filter(|p| !matches!(p, Pixel::Unassigned))
+            .count();
+        info!("Assigned {}/{} pixels", assigned, pixel_assignment.len());
+
+        let cv_processor = CVProcessor::new(
+            Arc::clone(&puzzle_geometry),
+            pixel_assignment.len(),
+            pixel_assignment,
+        );
+        tx.send_modify(|maybe_cv_processor| {
+            *maybe_cv_processor = Some(cv_processor);
+        });
+    });
 
     Effect::watch(
         move || messages.get(),
@@ -103,11 +157,18 @@ pub fn App() -> impl IntoView {
 
     view! {
       <header class="mb-5 font-sans text-4xl font-bold tracking-wider text-center bg-[rgb(47,48,80)] leading-20">
-        "QVIS"
+        <button
+          on:click=move |_| {
+            location().reload().unwrap();
+          }
+          class="cursor-pointer"
+        >
+          "QVIS"
+        </button>
       </header>
       <main class="flex flex-col gap-4 justify-center mr-4 ml-4 text-center">
-        <Video take_picture_resp take_picture_command pixel_assignment_command pixel_assignment_action />
-        <button on:click=do_pixel_assignment>
+        <Video video_ref canvas_ref />
+        <button on:click=move |_| do_pixel_assignment()>
           {move || {
             if pixel_assignment_action.pending().get() {
               "Uploading capture...".to_string()

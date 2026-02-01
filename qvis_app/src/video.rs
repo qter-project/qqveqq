@@ -1,36 +1,31 @@
-use crate::server_fns::TakePictureMessage;
-use leptos::{ev::canplay, html, prelude::*, task::spawn_local};
+use leptos::{ev::canplay, html, prelude::*};
 use leptos_use::{
     FacingMode, UseEventListenerOptions, UseUserMediaOptions, UseUserMediaReturn,
     VideoTrackConstraints, use_event_listener_with_options, use_user_media_with_options,
 };
 use log::{info, warn};
-use puzzle_theory::puzzle_geometry::parsing::puzzle;
-use qvis::{CVProcessor, Pixel};
 use wasm_bindgen::{JsCast, JsValue, prelude::Closure};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    Blob, CanvasRenderingContext2d, FormData, HtmlCanvasElement, HtmlVideoElement,
+    Blob, CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, HtmlVideoElement,
     js_sys::{self, Promise},
 };
 
-const WIDTH: u32 = 350;
+const WIDTH: u32 = 850;
 
-fn draw_video_on_canvas<'a>(
+fn draw_video_on_canvas(
     canvas_ref: &HtmlCanvasElement,
-    ctx: &'a mut Option<CanvasRenderingContext2d>,
     video_ref: &HtmlVideoElement,
-) -> &'a mut CanvasRenderingContext2d {
-    let ctx = ctx.get_or_insert_with(|| {
-        let opts = js_sys::Object::new();
-        js_sys::Reflect::set(&opts, &"willReadFrequently".into(), &true.into()).unwrap();
-        canvas_ref
-            .get_context_with_context_options("2d", &opts)
-            .unwrap()
-            .unwrap()
-            .dyn_into::<CanvasRenderingContext2d>()
-            .unwrap()
-    });
+) -> CanvasRenderingContext2d {
+    let opts = js_sys::Object::new();
+    js_sys::Reflect::set(&opts, &"willReadFrequently".into(), &true.into()).unwrap();
+    js_sys::Reflect::set(&opts, &"alpha".into(), &false.into()).unwrap();
+    let ctx = canvas_ref
+        .get_context_with_context_options("2d", &opts)
+        .unwrap()
+        .unwrap()
+        .dyn_into::<CanvasRenderingContext2d>()
+        .unwrap();
 
     ctx.draw_image_with_html_video_element_and_dw_and_dh(
         video_ref,
@@ -43,15 +38,70 @@ fn draw_video_on_canvas<'a>(
     ctx
 }
 
+pub(crate) fn take_picture_command(
+    video_ref: &HtmlVideoElement,
+    canvas_ref: &HtmlCanvasElement,
+) -> Box<[(f64, f64, f64)]> {
+    let ctx = draw_video_on_canvas(canvas_ref, video_ref);
+
+    let image_data = ctx
+        .get_image_data(
+            0.0,
+            0.0,
+            canvas_ref.width().into(),
+            canvas_ref.height().into(),
+        )
+        .unwrap();
+    let data = &*image_data.data();
+
+    info!("Captured image data length: {}", data.len());
+
+    data.chunks_exact(4)
+        .map(|rgba| {
+            let [r, g, b, _] = rgba.try_into().unwrap();
+            (
+                f64::from(r) / 255.0,
+                f64::from(g) / 255.0,
+                f64::from(b) / 255.0,
+            )
+        })
+        .collect::<Vec<_>>()
+        .into_boxed_slice()
+}
+
+pub(crate) async fn pixel_assignment_command(
+    video_ref: &HtmlVideoElement,
+    canvas_ref: &HtmlCanvasElement,
+) -> Result<Blob, JsValue> {
+    draw_video_on_canvas(canvas_ref, video_ref);
+
+    let promise = Promise::new(&mut |resolve, reject| {
+        let resolve = resolve.clone();
+        let closure = Closure::once(move |blob: Option<Blob>| match blob {
+            Some(blob) => {
+                resolve.call1(&JsValue::NULL, &blob).unwrap();
+            }
+            None => {
+                reject
+                    .call1(&JsValue::NULL, &JsValue::from_str("canvas toBlob failed"))
+                    .unwrap();
+            }
+        });
+        canvas_ref
+            .to_blob_with_type_and_encoder_options(
+                closure.as_ref().unchecked_ref(),
+                "image/webp",
+                &JsValue::from_f64(0.8),
+            )
+            .unwrap();
+        closure.forget();
+    });
+    let blob = JsFuture::from(promise).await?;
+    Ok(blob.dyn_into::<Blob>().unwrap())
+}
+
 #[component]
-pub fn Video(
-    take_picture_resp: Callback<TakePictureMessage>,
-    take_picture_command: ReadSignal<()>,
-    pixel_assignment_action: Action<FormData, Result<Box<[Pixel]>, ServerFnError>>,
-    pixel_assignment_command: ReadSignal<()>,
-) -> impl IntoView {
-    let video_ref = NodeRef::<html::Video>::new();
-    let canvas_ref = NodeRef::<html::Canvas>::new();
+pub fn Video(video_ref: NodeRef<html::Video>, canvas_ref: NodeRef<html::Canvas>) -> impl IntoView {
     let UseUserMediaReturn {
         stream,
         enabled,
@@ -61,11 +111,6 @@ pub fn Video(
         UseUserMediaOptions::default()
             .video(VideoTrackConstraints::default().facing_mode(FacingMode::Environment)), // .enabled((enabled, set_enabled).into()),
     );
-    
-    let puzzle_geometry = puzzle("3x3").into_inner();
-    let mut cv: Option<CVProcessor> = None;
-    let ctx: Option<CanvasRenderingContext2d> = None;
-    let mut ctx2 = ctx.clone();
 
     Effect::new(move |_| {
         // let media = use_window()
@@ -77,15 +122,15 @@ pub fn Video(
         let stream = stream.read();
         let maybe_stream = match stream.as_ref() {
             Some(Ok(s)) => {
-                info!("Stream is currently enabled");
+                info!("Video is currently enabled");
                 Some(s)
             }
             Some(Err(e)) => {
-                warn!("Failed to get media stream: {e:?}");
+                warn!("Failed to get intialize video: {e:?}");
                 None
             }
             None => {
-                info!("Stream is currently disabled");
+                info!("Video is currently disabled");
                 None
             }
         };
@@ -97,94 +142,10 @@ pub fn Video(
             set_enabled.set(new);
         }
     });
-    
+
     let toggle_enabled = move |_| {
         set_enabled.update(|e| *e = !*e);
     };
-
-    Effect::watch(
-        move || take_picture_command.get(),
-        move |(), _, _| {
-            let canvas_ref = canvas_ref.get_untracked().unwrap();
-            let video_ref = video_ref.get_untracked().unwrap();
-
-            let cv = cv.get_or_insert_with(|| {
-                todo!();
-            });
-
-            let ctx = draw_video_on_canvas(&canvas_ref, &mut ctx2, &video_ref);
-
-            let image_data = ctx
-                .get_image_data(
-                    0.0,
-                    0.0,
-                    canvas_ref.width().into(),
-                    canvas_ref.height().into(),
-                )
-                .unwrap();
-            let data = &*image_data.data();
-
-            info!("Captured image data length: {}", data.len());
-            let pixels = data
-                .chunks_exact(4)
-                .map(|rgba| {
-                    let [r, g, b, _] = rgba.try_into().unwrap();
-                    (
-                        f64::from(r) / 255.0,
-                        f64::from(g) / 255.0,
-                        f64::from(b) / 255.0,
-                    )
-                })
-                .collect::<Vec<_>>()
-                .into_boxed_slice();
-            let permutation = cv.process_image(pixels).0;
-            take_picture_resp.run(TakePictureMessage::PermutationResult(permutation));
-        },
-        false,
-    );
-    
-    Effect::watch(
-        move || pixel_assignment_command.get(),
-        move |(), _, _| {
-            let mut ctx = ctx.clone();
-            spawn_local(async move {
-                let canvas_ref = canvas_ref.get_untracked().unwrap();
-                let video_ref = video_ref.get_untracked().unwrap();
-                draw_video_on_canvas(&canvas_ref, &mut ctx, &video_ref);
-                
-                let promise = Promise::new(&mut |resolve, reject| {
-                    let resolve = resolve.clone();
-                    let closure = Closure::once(move |blob: Option<Blob>| match blob {
-                        Some(blob) => {
-                            resolve.call1(&JsValue::NULL, &blob).unwrap();
-                        }
-                        None => {
-                            reject
-                                .call1(&JsValue::NULL, &JsValue::from_str("toBlob failed"))
-                                .unwrap();
-                        }
-                    });
-                    canvas_ref
-                        .to_blob(closure.as_ref().unchecked_ref())
-                        .unwrap();
-                    closure.forget();
-                });
-                let blob = match JsFuture::from(promise).await {
-                    Ok(blob) => blob,
-                    Err(e) => {
-                        warn!("{e:?}");
-                        return;
-                    }
-                };
-                let blob = blob.dyn_into::<Blob>().unwrap();
-                
-                let form_data = FormData::new().unwrap();
-                form_data.append_with_blob("qvis_picture", &blob).unwrap();
-                pixel_assignment_action.dispatch_local(form_data);
-            });
-        },
-        false,
-    );
 
     let _ = use_event_listener_with_options(
         video_ref,
@@ -195,11 +156,35 @@ pub fn Video(
             let height = f64::from(video_ref.video_height())
                 / (f64::from(video_ref.video_width()) / f64::from(WIDTH));
             video_ref
-                .set_attribute("width", WIDTH.to_string().as_str())
+                .dyn_ref::<HtmlElement>()
+                .unwrap()
+                .style()
+                .set_property("height", &format!("{height}px"))
                 .unwrap();
             video_ref
-                .set_attribute("height", height.to_string().as_str())
+                .dyn_ref::<HtmlElement>()
+                .unwrap()
+                .style()
+                .set_property("width", &format!("{WIDTH}px"))
                 .unwrap();
+            canvas_ref
+                .dyn_ref::<HtmlElement>()
+                .unwrap()
+                .style()
+                .set_property("height", &format!("{height}px"))
+                .unwrap();
+            canvas_ref
+                .dyn_ref::<HtmlElement>()
+                .unwrap()
+                .style()
+                .set_property("width", &format!("{WIDTH}px"))
+                .unwrap();
+            // video_ref
+            //     .set_attribute("width", WIDTH.to_string().as_str())
+            //     .unwrap();
+            // video_ref
+            //     .set_attribute("height", height.to_string().as_str())
+            //     .unwrap();
             canvas_ref
                 .set_attribute("width", WIDTH.to_string().as_str())
                 .unwrap();
@@ -218,9 +203,9 @@ pub fn Video(
           controls=false
           autoplay=true
           muted=true
-          class="flex-1 min-w-0 border-2 border-white max-w-[400px]"
+          class="flex-1 min-w-0 border-2 border-white"
         />
-        <canvas node_ref=canvas_ref class="flex-1 min-w-0 border-2 border-amber-300 max-w-[400px]" />
+        <canvas node_ref=canvas_ref class="flex-1 min-w-0 border-2 border-amber-300" />
       </div>
     }
 }
