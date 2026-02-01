@@ -657,14 +657,17 @@ pub fn pixel_assignment_ui(
         {
             #[allow(clippy::missing_panics_doc)]
             let state = state.lock().unwrap();
+            if matches!(&state.ui, UIState::Finished | UIState::OpenCVError(_)) {
+                // https://stackoverflow.com/questions/6116564/destroywindow-does-not-close-window-on-mac-using-python-and-opencv
+                highgui::destroy_all_windows()?;
+                highgui::wait_key(0)?;
+            }
             match &state.ui {
                 UIState::Finished => {
-                    highgui::destroy_window(WINDOW_NAME)?;
                     leptos::logging::log!("Finished pixel assignment UI");
                     break Ok(state.pixel_assignment.clone());
                 }
                 UIState::OpenCVError(e) => {
-                    highgui::destroy_window(WINDOW_NAME)?;
                     break Err(opencv::Error::new(
                         e.code,
                         format!("OpenCV error during pixel assignment: {}", e.message),
