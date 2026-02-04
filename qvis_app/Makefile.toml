@@ -27,4 +27,4 @@ args = ["leptos", "serve"]
 
 [tasks.prod-caddy]
 command = "caddy"
-args = ["reverse-proxy", "--from", "192.168.191.3", "--to", ":3000"]
+args = ["reverse-proxy", "--from", "10.42.0.1", "--to", ":3000"]

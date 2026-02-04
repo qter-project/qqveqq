@@ -1454,9 +1454,8 @@ dependencies = [
 
 [[package]]
 name = "leptos-use"
-version = "0.17.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a59caa13dbc0f4d71bf3d610884953273c52a0bbe995b35d36cdb1c8f91142f"
+version = "0.18.0"
+source = "git+https://github.com/Synphonyte/leptos-use?rev=67b953d#67b953d174f2c8769b7ab6fb22bce335485d22c1"
 dependencies = [
  "cfg-if",
  "chrono",
@@ -1659,13 +1658,14 @@ dependencies = [
 
 [[package]]
 name = "leptos_ws"
-version = "0.9.4"
+version = "0.9.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75277a66ef06adf4a5b34b953ab6667d6ebfbca12e700be676cc2faef4d02bd7"
+checksum = "cef97f3bc3e6929fe8974f8100af8eb95526b83aeee13544da33c0892b690f69"
 dependencies = [
  "async-trait",
  "dashmap 6.1.0",
  "futures",
+ "gloo-timers",
  "json-patch",
  "leptos",
  "nanoid",
@@ -2297,6 +2297,7 @@ dependencies = [
  "puzzle_theory",
  "qvis",
  "rand 0.9.2",
+ "send_wrapper",
  "serde",
  "server_fn",
  "tokio",

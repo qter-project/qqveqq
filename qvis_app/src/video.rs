@@ -1,13 +1,21 @@
-use leptos::{ev::canplay, html, prelude::*};
+use leptos::{
+    ev::{Targeted, canplay},
+    html,
+    prelude::*,
+};
 use leptos_use::{
-    FacingMode, UseEventListenerOptions, UseUserMediaOptions, UseUserMediaReturn,
-    VideoTrackConstraints, use_event_listener_with_options, use_user_media_with_options,
+    ConstraintExactIdeal, FacingMode, UseEventListenerOptions, UseUserMediaOptions,
+    UseUserMediaReturn, VideoTrackConstraints, use_event_listener_with_options,
+    use_user_media_with_options,
 };
 use log::{info, warn};
+use qvis::Pixel;
+use send_wrapper::SendWrapper;
 use wasm_bindgen::{JsCast, JsValue, prelude::Closure};
-use wasm_bindgen_futures::JsFuture;
+use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{
-    Blob, CanvasRenderingContext2d, HtmlCanvasElement, HtmlElement, HtmlVideoElement,
+    Blob, CanvasRenderingContext2d, Event, FormData, HtmlCanvasElement, HtmlElement,
+    HtmlSelectElement, HtmlVideoElement, MediaDeviceKind,
     js_sys::{self, Promise},
 };
 
@@ -100,17 +108,47 @@ pub(crate) async fn pixel_assignment_command(
     Ok(blob.dyn_into::<Blob>().unwrap())
 }
 
+async fn all_camera_devices() -> Result<Vec<SendWrapper<web_sys::MediaDeviceInfo>>, JsValue> {
+    let media_devices = web_sys::window()
+        .ok_or_else(|| JsValue::from_str("Failed to access window"))?
+        .navigator()
+        .media_devices()?;
+
+    let devices_promise = media_devices.enumerate_devices()?;
+    let devices_js = JsFuture::from(devices_promise).await?;
+    let devices_array = js_sys::Array::from(&devices_js);
+
+    Ok(devices_array
+        .iter()
+        .filter_map(|device_js| {
+            let device_info: web_sys::MediaDeviceInfo = device_js.dyn_into().ok()?;
+            if device_info.kind() == MediaDeviceKind::Videoinput {
+                Some(SendWrapper::new(device_info))
+            } else {
+                None
+            }
+        })
+        .collect())
+}
+
 #[component]
-pub fn Video(video_ref: NodeRef<html::Video>, canvas_ref: NodeRef<html::Canvas>) -> impl IntoView {
+pub fn Video(
+    video_ref: NodeRef<html::Video>,
+    canvas_ref: NodeRef<html::Canvas>,
+    pixel_assignment_action: Action<FormData, Result<Box<[Pixel]>, ServerFnError>>,
+    do_pixel_assignment: impl Fn() + 'static,
+) -> impl IntoView {
     let UseUserMediaReturn {
         stream,
         enabled,
         set_enabled,
         ..
-    } = use_user_media_with_options(
-        UseUserMediaOptions::default()
-            .video(VideoTrackConstraints::default().facing_mode(FacingMode::Environment)), // .enabled((enabled, set_enabled).into()),
-    );
+    } = use_user_media_with_options(UseUserMediaOptions::default().video(
+        VideoTrackConstraints::default().facing_mode(ConstraintExactIdeal::ExactIdeal {
+            exact: None,
+            ideal: Some(FacingMode::Environment),
+        }),
+    ));
 
     Effect::new(move |_| {
         // let media = use_window()
@@ -195,6 +233,53 @@ pub fn Video(video_ref: NodeRef<html::Video>, canvas_ref: NodeRef<html::Canvas>)
         UseEventListenerOptions::default().once(true),
     );
 
+    let camera_devices =
+        LocalResource::new(move || async move { all_camera_devices().await.unwrap() });
+    let camera_device =
+        LocalResource::new(move || async move { camera_devices.await.first().cloned() });
+
+    let select_camera_device = move |ev: Targeted<Event, HtmlSelectElement>| {
+        let v = ev.target().value();
+        let selected_camera_device = camera_devices
+            .get()
+            .unwrap()
+            .iter()
+            .find(|d| d.device_id() == v)
+            .cloned();
+        *camera_device.write() = Some(selected_camera_device);
+
+        let a = web_sys::MediaTrackConstraints::default();
+
+        let b = web_sys::ConstrainDomStringParameters::default();
+        b.set_ideal(&JsValue::from_str("environment"));
+        a.set_facing_mode(&b);
+
+        let b = web_sys::ConstrainDomStringParameters::default();
+        b.set_exact(&JsValue::from_str(&v));
+        a.set_device_id(&b);
+
+        let c = web_sys::MediaStreamConstraints::default();
+        c.set_video(&a);
+
+        spawn_local(async move {
+            if let Some(device) = stream.get_untracked() {
+                for track in device.unwrap().get_tracks() {
+                    // info!("{track:?}");
+                    // info!("{opt2:?}");
+                    // info!("{:?}", opt2.to_string());
+                    wasm_bindgen_futures::JsFuture::from(
+                        track
+                            .unchecked_ref::<web_sys::MediaStreamTrack>()
+                            .apply_constraints_with_constraints(c.unchecked_ref())
+                            .unwrap(),
+                    )
+                    .await
+                    .unwrap();
+                }
+            }
+        });
+    };
+
     view! {
       <div class="flex gap-4 justify-around">
         <video
@@ -203,9 +288,51 @@ pub fn Video(video_ref: NodeRef<html::Video>, canvas_ref: NodeRef<html::Canvas>)
           controls=false
           autoplay=true
           muted=true
-          class="flex-1 min-w-0 border-2 border-white"
+          class="flex-1 min-w-0 border-2 border-white max-w-[400px]"
         />
-        <canvas node_ref=canvas_ref class="flex-1 min-w-0 border-2 border-amber-300" />
+        <canvas node_ref=canvas_ref class="flex-1 min-w-0 border-2 border-amber-300 max-w-[400px]" />
       </div>
+      // zoom
+      // resolution (width)
+      // camera device
+      <select
+        on:change:target=select_camera_device
+        prop:value=move || camera_device.get().flatten().map(|d| d.device_id()).unwrap_or_default()
+        class="cursor-pointer"
+      >
+        <Suspense fallback=move || {
+          view! { <option>"Loading..."</option> }
+        }>
+          {move || Suspend::new(async move {
+            view! {
+              {camera_devices
+                .await
+                .iter()
+                .map(|device| {
+                  view! {
+                    <option value=device
+                      .device_id()>
+                      {if device.label().is_empty() {
+                        format!("Unidentified: {}", device.device_id())
+                      } else {
+                        device.label()
+                      }}
+                    </option>
+                  }
+                })
+                .collect::<Vec<_>>()}
+            }
+          })}
+        </Suspense>
+      </select>
+      <button on:click=move |_| do_pixel_assignment() class="inline cursor-pointer">
+        {move || {
+          if pixel_assignment_action.pending().get() {
+            "Processing...".to_string()
+          } else {
+            "Pixel assignment".to_string()
+          }
+        }}
+      </button>
     }
 }

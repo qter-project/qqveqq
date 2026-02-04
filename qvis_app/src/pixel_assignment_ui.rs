@@ -20,12 +20,14 @@ const EROSION_SIZE_TRACKBAR_NAME: &str = "Erosion size";
 const EROSION_SIZE_TRACKBAR_MINDEFMAX: [i32; 3] = [2, 4, 20];
 const UPPER_DIFF_TRACKBAR_NAME: &str = "Upper diff";
 const UPPER_DIFF_TRACKBAR_MINDEFMAX: [i32; 3] = [0, 2, 5];
+const GUI_SCALE_TRACKBAR_NAME: &str = "GUI Scale";
+const GUI_SCALE_TRACKBAR_MINDEFMAX: [i32; 3] = [0, 11, 20];
 const SUBMIT_BUTTON_NAME: &str = "Assign sticker";
 const EROSION_KERNEL_MORPH_SHAPE: i32 = MORPH_ELLIPSE;
 const DEF_ANCHOR: Point = Point::new(-1, -1);
 const XY_CIRCLE_RADIUS: i32 = 6;
 const MAX_PIXEL_VALUE: i32 = 255;
-const MAX_PIXEL_COUNT: i32 = 300_000;
+const MAX_PIXEL_COUNT: i32 = 300_000 * 100;
 const ERODE_UNTIL_PERCENT: (i32, i32) = (1, 3);
 const MIN_SAMPLES: i32 = 30;
 const NUM_QVIS_PIXELS: usize = 20;
@@ -49,6 +51,7 @@ struct State {
     mask_roi: Rect,
     pixel_assignment: Box<[Pixel]>,
     work: Vec<(Face, Vec<ArcIntern<str>>)>,
+    gui_scale: f64,
     current_sticker_idx: usize,
     upper_flood_fill_diff: i32,
     maybe_drag_origin: Option<(i32, i32)>,
@@ -146,10 +149,7 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
             BORDER_CONSTANT,
             imgproc::morphology_default_border_value()?,
         )?;
-        let to_dilate = if opencv::core::has_non_zero(&Mat::roi(
-            &state.cleaned_grayscale_mask,
-            state.mask_roi,
-        )?)? {
+        if opencv::core::has_non_zero(&Mat::roi(&state.cleaned_grayscale_mask, state.mask_roi)?)? {
             *state
                 .cleaned_grayscale_mask
                 .at_2d_mut::<u8>(drag_origin_y + 1, drag_origin_x + 1)? =
@@ -169,36 +169,39 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
                 4 | FLOODFILL_FIXED_RANGE | FLOODFILL_MASK_ONLY | (MAX_PIXEL_VALUE << 8),
             )?;
             std::mem::swap(&mut state.cleaned_grayscale_mask, &mut state.tmp_mask);
-            &mut state.cleaned_grayscale_mask
-        } else {
-            &mut state.grayscale_mask
-        };
 
-        let rows = to_dilate.rows();
-        let cols = to_dilate.cols();
-        to_dilate
-            .roi_mut(Rect::new(0, 0, cols, 2))?
-            .set_to_def(&Scalar::all(0.0))?;
-        to_dilate
-            .roi_mut(Rect::new(0, rows - 2, cols, 2))?
-            .set_to_def(&Scalar::all(0.0))?;
-        to_dilate
-            .roi_mut(Rect::new(0, 2, 2, rows - 4))?
-            .set_to_def(&Scalar::all(0.0))?;
-        to_dilate
-            .roi_mut(Rect::new(cols - 2, 2, 2, rows - 4))?
-            .set_to_def(&Scalar::all(0.0))?;
-        // For some reason dilation doesn't work on ROIs
-        imgproc::dilate(
-            to_dilate,
-            &mut state.tmp_mask,
-            &state.erosion_kernel_times_two,
-            DEF_ANCHOR,
-            1,
-            BORDER_CONSTANT,
-            imgproc::morphology_default_border_value()?,
-        )?;
-        std::mem::swap(&mut state.cleaned_grayscale_mask, &mut state.tmp_mask);
+            let rows = state.cleaned_grayscale_mask.rows();
+            let cols = state.cleaned_grayscale_mask.cols();
+            state
+                .cleaned_grayscale_mask
+                .roi_mut(Rect::new(0, 0, cols, 2))?
+                .set_to_def(&Scalar::all(0.0))?;
+            state
+                .cleaned_grayscale_mask
+                .roi_mut(Rect::new(0, rows - 2, cols, 2))?
+                .set_to_def(&Scalar::all(0.0))?;
+            state
+                .cleaned_grayscale_mask
+                .roi_mut(Rect::new(0, 2, 2, rows - 4))?
+                .set_to_def(&Scalar::all(0.0))?;
+            state
+                .cleaned_grayscale_mask
+                .roi_mut(Rect::new(cols - 2, 2, 2, rows - 4))?
+                .set_to_def(&Scalar::all(0.0))?;
+            // For some reason dilation doesn't work on ROIs
+            imgproc::dilate(
+                &state.cleaned_grayscale_mask,
+                &mut state.tmp_mask,
+                &state.erosion_kernel_times_two,
+                DEF_ANCHOR,
+                1,
+                BORDER_CONSTANT,
+                imgproc::morphology_default_border_value()?,
+            )?;
+            std::mem::swap(&mut state.cleaned_grayscale_mask, &mut state.tmp_mask);
+        } else {
+            std::mem::swap(&mut state.cleaned_grayscale_mask, &mut state.grayscale_mask);
+        }
 
         let og_num_pixels = opencv::core::count_non_zero(&state.cleaned_grayscale_mask)?;
         let mut erosion_count = 0;
@@ -219,7 +222,13 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
                 &state.cleaned_grayscale_mask
             } else {
                 if has_eroded_enough(&state.eroded_grayscale_mask)? {
-                    std::mem::swap(&mut state.eroded_grayscale_mask, &mut state.tmp_mask);
+                    if erosion_count == 1 {
+                        state
+                            .cleaned_grayscale_mask
+                            .copy_to(&mut state.eroded_grayscale_mask)?;
+                    } else {
+                        std::mem::swap(&mut state.eroded_grayscale_mask, &mut state.tmp_mask);
+                    }
                     break &state.eroded_grayscale_mask;
                 }
                 &state.eroded_grayscale_mask
@@ -235,11 +244,7 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
                 imgproc::morphology_default_border_value()?,
             )?;
 
-            if erosion_count == 0 {
-                state.tmp_mask.copy_to(&mut state.eroded_grayscale_mask)?;
-            } else {
-                std::mem::swap(&mut state.eroded_grayscale_mask, &mut state.tmp_mask);
-            }
+            std::mem::swap(&mut state.eroded_grayscale_mask, &mut state.tmp_mask);
             erosion_count += 1;
         };
 
@@ -313,44 +318,38 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
         ran = false;
         state.samples.clear();
     }
-    imgproc::put_text(
-        &mut state.displayed_img,
-        &format!(
+    let (face, sticker) = &state.work[state.current_sticker_idx];
+    let text = if sticker.len() == 1 {
+        format!("Choose white balance on {}", face.color)
+    } else {
+        format!(
             "Choose {} on {}",
-            state.work[state.current_sticker_idx]
-                .1
+            sticker
                 .iter()
                 .map(std::string::ToString::to_string)
                 .collect::<String>(),
-            state.work[state.current_sticker_idx].0.color
-        ),
-        Point::new(10, 40),
-        imgproc::FONT_HERSHEY_SIMPLEX,
-        1.1,
-        Scalar::all(0.0),
-        5,
-        imgproc::LINE_8,
-        false,
-    )?;
-    imgproc::put_text(
-        &mut state.displayed_img,
-        &format!(
-            "Choose {} on {}",
-            state.work[state.current_sticker_idx]
-                .1
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect::<String>(),
-            state.work[state.current_sticker_idx].0.color
-        ),
-        Point::new(10, 40),
-        imgproc::FONT_HERSHEY_SIMPLEX,
-        1.1,
-        Scalar::all(f64::from(MAX_PIXEL_VALUE)),
-        2,
-        imgproc::LINE_8,
-        false,
-    )?;
+            face.color
+        )
+    };
+    let mut display_instructions = |first: bool| -> Result<(), opencv::Error> {
+        imgproc::put_text(
+            &mut state.displayed_img,
+            &text,
+            Point::new(10, 40),
+            imgproc::FONT_HERSHEY_SIMPLEX,
+            1.1,
+            if first {
+                Scalar::all(0.0)
+            } else {
+                Scalar::all(f64::from(MAX_PIXEL_VALUE))
+            },
+            if first { 5 } else { 2 },
+            imgproc::LINE_8,
+            false,
+        )
+    };
+    display_instructions(true)?;
+    display_instructions(false)?;
     if ran {
         let cleaned_grayscale_mask_cropped =
             Mat::roi(&state.cleaned_grayscale_mask, state.mask_roi)?;
@@ -416,6 +415,10 @@ fn light_tolerance_trackbar_callback(state: &mut State, pos: i32) -> opencv::Res
     Ok(())
 }
 
+fn gui_scale_trackbar_callback(state: &mut State, pos: i32) {
+    state.gui_scale = f64::from(pos) / 10.0;
+}
+
 fn submit_button_callback(state: &mut State) -> opencv::Result<()> {
     let cleaned_grayscale_mask_cropped = Mat::roi(&state.cleaned_grayscale_mask, state.mask_roi)?;
     assert_eq!(
@@ -426,14 +429,18 @@ fn submit_button_callback(state: &mut State) -> opencv::Result<()> {
     let h = cleaned_grayscale_mask_cropped.rows();
     let w = cleaned_grayscale_mask_cropped.cols();
     let mut count = 0;
-    // TODO: CHANGE
+    let (face, sticker) = &state.work[state.current_sticker_idx];
     for y in 0..h {
         for x in 0..w {
             let value = *cleaned_grayscale_mask_cropped.at_2d::<u8>(y, x)?;
             let idx = usize::try_from(y * w + x).unwrap();
             if i32::from(value) == MAX_PIXEL_VALUE {
                 count += 1;
-                state.pixel_assignment[idx] = Pixel::Sticker(state.current_sticker_idx);
+                state.pixel_assignment[idx] = if sticker.len() == 1 {
+                    Pixel::WhiteBalance(face.color.clone())
+                } else {
+                    Pixel::Sticker(state.current_sticker_idx)
+                };
             }
         }
     }
@@ -550,6 +557,7 @@ pub fn pixel_assignment_ui(
         eroded_grayscale_mask,
         erosion_kernel,
         erosion_kernel_times_two,
+        gui_scale: 0.0,
         displayed_img,
         mask_roi,
         pixel_assignment,
@@ -630,6 +638,30 @@ pub fn pixel_assignment_ui(
     }
     {
         let state = Arc::clone(&state);
+        highgui::create_trackbar(
+            GUI_SCALE_TRACKBAR_NAME,
+            WINDOW_NAME,
+            None,
+            GUI_SCALE_TRACKBAR_MINDEFMAX[2],
+            Some(Box::new(move |pos| {
+                #[allow(clippy::missing_panics_doc)]
+                let mut state = state.lock().unwrap();
+                gui_scale_trackbar_callback(&mut state, pos);
+            })),
+        )?;
+        highgui::set_trackbar_pos(
+            GUI_SCALE_TRACKBAR_NAME,
+            WINDOW_NAME,
+            GUI_SCALE_TRACKBAR_MINDEFMAX[1],
+        )?;
+        highgui::set_trackbar_min(
+            GUI_SCALE_TRACKBAR_NAME,
+            WINDOW_NAME,
+            GUI_SCALE_TRACKBAR_MINDEFMAX[0],
+        )?;
+    }
+    {
+        let state = Arc::clone(&state);
         highgui::create_button_def(
             SUBMIT_BUTTON_NAME,
             Some(Box::new(move |_state| {
@@ -673,7 +705,18 @@ pub fn pixel_assignment_ui(
                         format!("OpenCV error during pixel assignment: {}", e.message),
                     ));
                 }
-                UIState::Assigning => (),
+                UIState::Assigning
+                    if (highgui::get_window_property(WINDOW_NAME, highgui::WND_PROP_VISIBLE)?
+                        + 1.0)
+                        .abs()
+                        < 0.1 =>
+                {
+                    break Err(opencv::Error::new(
+                        opencv::core::StsError,
+                        "Pixel assignment window was closed by user".to_string(),
+                    ));
+                }
+                UIState::Assigning => {}
             }
         }
 

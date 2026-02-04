@@ -40,20 +40,19 @@ pub fn App() -> impl IntoView {
     }
 
     leptos_ws::provide_websocket();
-    // #[cfg(feature = "hydrate")]
-    // {
-    //     use leptos_ws::ServerSignalWebSocket;
-    //     let context = expect_context::<ServerSignalWebSocket>();
-    //     context.set_on_connect(move || {
-    //         info!("Established connection with server");
-    //     });
-    //     context.set_on_disconnect(move || {
-    //         warn!("Lost connection with server");
-    //     });
-    //     context.set_on_reconnect(move || {
-    //         info!("Re-established connection with server");
-    //     });
-    // }
+    #[cfg(feature = "hydrate")]
+    {
+        let context = expect_context::<leptos_ws::ServerSignalWebSocket>();
+        context.set_on_connect(move || {
+            info!("Established connection with server");
+        });
+        context.set_on_disconnect(move || {
+            warn!("Lost connection with server");
+        });
+        context.set_on_reconnect(move || {
+            info!("Re-established connection with server");
+        });
+    }
 
     let messages_container = NodeRef::<leptos::html::Div>::new();
     let (overflowing, set_overflowing) = signal(true);
@@ -167,16 +166,7 @@ pub fn App() -> impl IntoView {
         </button>
       </header>
       <main class="flex flex-col gap-4 justify-center mr-4 ml-4 text-center">
-        <Video video_ref canvas_ref />
-        <button on:click=move |_| do_pixel_assignment()>
-          {move || {
-            if pixel_assignment_action.pending().get() {
-              "Uploading capture...".to_string()
-            } else {
-              "Pixel assignment".to_string()
-            }
-          }}
-        </button>
+        <Video video_ref canvas_ref pixel_assignment_action do_pixel_assignment/>
         "Messages:"
         <div class="relative h-72 font-mono text-left border-2 border-gray-300">
           <div

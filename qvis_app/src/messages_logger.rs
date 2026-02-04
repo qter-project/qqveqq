@@ -1,9 +1,13 @@
 use leptos::prelude::*;
 use log::{Log, Metadata, Record};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{
+    Mutex,
+    atomic::{AtomicU32, Ordering},
+};
 
 pub struct MessagesLogger {
     writer: WriteSignal<Vec<(u32, String)>>,
+    prev: Mutex<Option<(u32, String)>>,
     id: AtomicU32,
 }
 
@@ -12,6 +16,7 @@ impl MessagesLogger {
         Self {
             writer,
             id: AtomicU32::new(0),
+            prev: Mutex::new(None),
         }
     }
 }
@@ -22,11 +27,24 @@ impl Log for MessagesLogger {
     }
 
     fn log(&self, record: &Record) {
+        let Ok(mut prev) = self.prev.lock() else {
+            return;
+        };
+
+        let log = format!("[{}] {}", record.level(), record.args());
+        let next_id = self.id.fetch_add(1, Ordering::Relaxed);
         self.writer.update(|v| {
-            v.push((
-                self.id.fetch_add(1, Ordering::SeqCst),
-                format!("[{}] {}", record.level(), record.args()),
-            ));
+            if let Some((ref mut prev_repeated, ref prev_log)) = *prev
+                && let Some((last_id, last)) = v.last_mut()
+                && prev_log == &log
+            {
+                *last_id = next_id;
+                *prev_repeated += 1;
+                *last = format!("{log} (x{})", *prev_repeated);
+            } else {
+                *prev = Some((1, log.clone()));
+                v.push((next_id, log));
+            }
         });
     }
 
