@@ -56,11 +56,11 @@ impl CVProcessor {
     }
 
     /// Calibrate the CV processor with an image of the puzzle in the given state.
-    pub fn calibrate(&mut self, image: &[(f64, f64, f64)], state: Permutation) {
+    pub fn calibrate(&mut self, image: &[(f64, f64, f64)], state: &Permutation) {
         assert_eq!(self.image_size, image.len());
 
         self.inference
-            .calibrate(image, &state, &self.puzzle.permutation_group());
+            .calibrate(image, state, &self.puzzle.permutation_group());
     }
 
     /// Process an image and return the most likely state that the puzzle appears to be in, along with the confidence in the prediction. This is guaranteed to be a valid member of the group.

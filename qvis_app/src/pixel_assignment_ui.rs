@@ -50,9 +50,11 @@ struct State {
     displayed_img: Mat,
     mask_roi: Rect,
     pixel_assignment: Box<[Pixel]>,
-    work: Vec<(Face, Vec<ArcIntern<str>>)>,
+    stickers_to_assign: Vec<(Face, Vec<ArcIntern<str>>)>,
+    white_balances_to_assign: Vec<Face>,
+    assigning_sticker_idx: usize,
+    assigning_white_balance_idx: usize,
     gui_scale: f64,
-    current_sticker_idx: usize,
     upper_flood_fill_diff: i32,
     maybe_drag_origin: Option<(i32, i32)>,
     maybe_drag_xy: Option<(i32, i32)>,
@@ -318,38 +320,44 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
         ran = false;
         state.samples.clear();
     }
-    let (face, sticker) = &state.work[state.current_sticker_idx];
-    let text = if sticker.len() == 1 {
-        format!("Choose white balance on {}", face.color)
-    } else {
-        format!(
-            "Choose {} on {}",
-            sticker
-                .iter()
-                .map(std::string::ToString::to_string)
-                .collect::<String>(),
-            face.color
-        )
-    };
-    let mut display_instructions = |first: bool| -> Result<(), opencv::Error> {
-        imgproc::put_text(
-            &mut state.displayed_img,
-            &text,
-            Point::new(10, 40),
-            imgproc::FONT_HERSHEY_SIMPLEX,
-            1.1,
-            if first {
-                Scalar::all(0.0)
-            } else {
-                Scalar::all(f64::from(MAX_PIXEL_VALUE))
-            },
-            if first { 5 } else { 2 },
-            imgproc::LINE_8,
-            false,
-        )
-    };
-    display_instructions(true)?;
-    display_instructions(false)?;
+    if let Some(white_balance_face) = state
+        .white_balances_to_assign
+        .get(state.assigning_white_balance_idx)
+    {
+        let text = if let Some((assigning_face, assigning_sticker)) =
+            state.stickers_to_assign.get(state.assigning_sticker_idx)
+        {
+            format!(
+                "Choose {} on {}",
+                assigning_sticker
+                    .iter()
+                    .map(std::string::ToString::to_string)
+                    .collect::<String>(),
+                assigning_face.color
+            )
+        } else {
+            format!("Choose white balance on {}", white_balance_face.color)
+        };
+        let mut display_instructions = |first: bool| -> Result<(), opencv::Error> {
+            imgproc::put_text(
+                &mut state.displayed_img,
+                &text,
+                Point::new(10, 40),
+                imgproc::FONT_HERSHEY_SIMPLEX,
+                state.gui_scale,
+                if first {
+                    Scalar::all(0.0)
+                } else {
+                    Scalar::all(f64::from(MAX_PIXEL_VALUE))
+                },
+                if first { 5 } else { 2 },
+                imgproc::LINE_8,
+                false,
+            )
+        };
+        display_instructions(true)?;
+        display_instructions(false)?;
+    }
     if ran {
         let cleaned_grayscale_mask_cropped =
             Mat::roi(&state.cleaned_grayscale_mask, state.mask_roi)?;
@@ -420,50 +428,38 @@ fn gui_scale_trackbar_callback(state: &mut State, pos: i32) {
 }
 
 fn submit_button_callback(state: &mut State) -> opencv::Result<()> {
-    let cleaned_grayscale_mask_cropped = Mat::roi(&state.cleaned_grayscale_mask, state.mask_roi)?;
-    assert_eq!(
-        cleaned_grayscale_mask_cropped.total(),
-        state.pixel_assignment.len()
-    );
-
-    let h = cleaned_grayscale_mask_cropped.rows();
-    let w = cleaned_grayscale_mask_cropped.cols();
     let mut count = 0;
-    let (face, sticker) = &state.work[state.current_sticker_idx];
-    for y in 0..h {
-        for x in 0..w {
-            let value = *cleaned_grayscale_mask_cropped.at_2d::<u8>(y, x)?;
-            let idx = usize::try_from(y * w + x).unwrap();
-            if i32::from(value) == MAX_PIXEL_VALUE {
-                count += 1;
-                state.pixel_assignment[idx] = if sticker.len() == 1 {
-                    Pixel::WhiteBalance(face.color.clone())
-                } else {
-                    Pixel::Sticker(state.current_sticker_idx)
-                };
-            }
+    for &idx in &state.samples {
+        count += 1;
+        state.pixel_assignment[idx] =
+            if state.assigning_sticker_idx == state.stickers_to_assign.len() {
+                let face = &state.white_balances_to_assign[state.assigning_white_balance_idx];
+                Pixel::WhiteBalance(face.color.clone())
+            } else {
+                Pixel::Sticker(state.assigning_sticker_idx)
+            };
+    }
+
+    leptos::logging::log!("Assigned {count} pixels",);
+
+    if state.assigning_sticker_idx == state.stickers_to_assign.len() {
+        state.assigning_white_balance_idx += 1;
+        if state.assigning_white_balance_idx == state.white_balances_to_assign.len() {
+            state.ui = UIState::Finished;
+            return Ok(());
         }
-    }
-
-    leptos::logging::log!(
-        "Assigned {} pixels to sticker {}",
-        count,
-        state.current_sticker_idx
-    );
-
-    state.current_sticker_idx += 1;
-    if state.current_sticker_idx == state.work.len() {
-        state.ui = UIState::Finished;
     } else {
-        state.maybe_drag_origin = None;
-        update_display(state)?;
+        state.assigning_sticker_idx += 1;
     }
+    state.maybe_drag_origin = None;
+    update_display(state)?;
 
     Ok(())
 }
 
 fn restart_button_callback(state: &mut State) -> opencv::Result<()> {
-    state.current_sticker_idx = 0;
+    state.assigning_sticker_idx = 0;
+    state.assigning_white_balance_idx = 0;
     state.pixel_assignment.fill(Pixel::Unassigned);
     state.maybe_drag_origin = None;
     update_display(state)?;
@@ -546,7 +542,12 @@ pub fn pixel_assignment_ui(
     ]
     .into_boxed_slice();
 
-    let work = puzzle_geometry.stickers().to_vec();
+    let stickers_to_assign = puzzle_geometry.non_fixed_stickers().to_vec();
+    let mut white_balances_to_assign: Vec<_> = stickers_to_assign
+        .iter()
+        .map(|(face, _)| face.clone())
+        .collect();
+    white_balances_to_assign.dedup_by_key(|face| face.color.clone());
 
     let state = Arc::new(Mutex::new(State {
         img,
@@ -561,8 +562,10 @@ pub fn pixel_assignment_ui(
         displayed_img,
         mask_roi,
         pixel_assignment,
-        work,
-        current_sticker_idx: 0,
+        stickers_to_assign,
+        white_balances_to_assign,
+        assigning_white_balance_idx: 0,
+        assigning_sticker_idx: 0,
         upper_flood_fill_diff: 0,
         maybe_drag_origin: None,
         maybe_drag_xy: None,
@@ -705,17 +708,17 @@ pub fn pixel_assignment_ui(
                         format!("OpenCV error during pixel assignment: {}", e.message),
                     ));
                 }
-                UIState::Assigning
-                    if (highgui::get_window_property(WINDOW_NAME, highgui::WND_PROP_VISIBLE)?
-                        + 1.0)
-                        .abs()
-                        < 0.1 =>
-                {
-                    break Err(opencv::Error::new(
-                        opencv::core::StsError,
-                        "Pixel assignment window was closed by user".to_string(),
-                    ));
-                }
+                // UIState::Assigning
+                //     if (highgui::get_window_property(WINDOW_NAME, highgui::WND_PROP_VISIBLE)?
+                //         + 1.0)
+                //         .abs()
+                //         < 0.1 =>
+                // {
+                //     break Err(opencv::Error::new(
+                //         opencv::core::StsError,
+                //         "Pixel assignment window was closed by user".to_string(),
+                //     ));
+                // }
                 UIState::Assigning => {}
             }
         }

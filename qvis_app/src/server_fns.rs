@@ -6,10 +6,12 @@ use server_fn::codec::{MultipartData, MultipartFormData};
 
 #[cfg(feature = "ssr")]
 mod ssr_imports {
+    pub use axum::extract::Query;
     pub use bytes::Bytes;
-    pub use log::warn;
     pub use leptos::logging::log;
+    pub use leptos_axum::extract;
     pub use leptos_ws::ChannelSignal;
+    pub use log::warn;
     pub use qvis::Pixel;
     pub use std::sync::Mutex;
 }
@@ -18,16 +20,39 @@ pub const TAKE_PICTURE_CHANNEL: &str = "take_picture_channel";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TakePictureMessage {
+    // Request
     TakePicture,
+    Calibrate(Permutation),
+    // Response
+    // TODO:
+    // QvisAppError,
     PermutationResult(Permutation),
+    Calibrated,
+}
+
+#[derive(Deserialize, Debug)]
+struct TakePictureQuery {
+    calibration_permutation: Option<String>,
 }
 
 #[server(
   endpoint = "take_picture",
   input = GetUrl,
 )]
-pub async fn take_picture() -> Result<Permutation, ServerFnError> {
+pub async fn take_picture() -> Result<Option<Permutation>, ServerFnError> {
     use ssr_imports::*;
+
+    let query: Query<TakePictureQuery> = extract().await?;
+    println!("Query: {:?}", &query);
+    // if let Some(permutation) = &query.permutation {
+    //     dbg!(permutation);
+    //     let permutation = permutation
+    //         .parse::<Permutation>()
+    //         .map_err(ServerFnError::new)?;
+    //     dbg!(permutation);
+    // } else {
+    //     dbg!("none");
+    // }
 
     let channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).map_err(ServerFnError::new)?;
 
@@ -37,20 +62,35 @@ pub async fn take_picture() -> Result<Permutation, ServerFnError> {
     channel
         .on_server(move |message: &TakePictureMessage| {
             log!("Received message {message:#?}");
+            let response_tx = response_tx
+                .lock()
+                .unwrap()
+                .take()
+                .expect("Expected to send only one response");
             match message {
                 TakePictureMessage::PermutationResult(permutation) => {
-                    response_tx.lock().unwrap().take().expect("Expected to send only one response").send(permutation.clone()).unwrap();
+                    response_tx.send(Some(permutation.clone())).unwrap();
                 }
-                TakePictureMessage::TakePicture => {
-                    warn!("Received TakePictureMessage::TakePicture on server, which should not happen");
+                TakePictureMessage::Calibrated => {
+                    response_tx.send(None).unwrap();
+                }
+                m @ (TakePictureMessage::TakePicture | TakePictureMessage::Calibrate(_)) => {
+                    warn!("Received {m:?} on server, which should not happen");
                 }
             }
         })
         .map_err(ServerFnError::new)?;
 
-    channel
-        .send_message(TakePictureMessage::TakePicture)
-        .map_err(ServerFnError::new)?;
+    let message = if let Some(calibration_permutation) = &query.calibration_permutation {
+        let permutation = calibration_permutation
+            .parse::<Permutation>()
+            .map_err(ServerFnError::new)?;
+        TakePictureMessage::Calibrate(permutation)
+    } else {
+        TakePictureMessage::TakePicture
+    };
+
+    channel.send_message(message).map_err(ServerFnError::new)?;
 
     response_rx.await.map_err(ServerFnError::new)
 }

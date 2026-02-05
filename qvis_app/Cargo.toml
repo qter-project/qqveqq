@@ -26,6 +26,7 @@ axum = { version = "0.8.8", features = ["macros"], optional = true }
 internment = { version = "0.8.6", features = ["arc"] }
 rand = "0.9.2"
 wasm-bindgen-futures = "0.4.58"
+gloo-timers = "0.3.0"
 
 [dependencies.leptos-use]
 git = "https://github.com/Synphonyte/leptos-use"

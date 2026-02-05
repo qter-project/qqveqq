@@ -3,11 +3,7 @@ use leptos::{
     html,
     prelude::*,
 };
-use leptos_use::{
-    ConstraintExactIdeal, FacingMode, UseEventListenerOptions, UseUserMediaOptions,
-    UseUserMediaReturn, VideoTrackConstraints, use_event_listener_with_options,
-    use_user_media_with_options,
-};
+use leptos_use::{UseEventListenerOptions, UseUserMediaReturn, use_event_listener_with_options};
 use log::{info, warn};
 use qvis::Pixel;
 use send_wrapper::SendWrapper;
@@ -137,18 +133,18 @@ pub fn Video(
     canvas_ref: NodeRef<html::Canvas>,
     pixel_assignment_action: Action<FormData, Result<Box<[Pixel]>, ServerFnError>>,
     do_pixel_assignment: impl Fn() + 'static,
+    use_user_media_return: UseUserMediaReturn<
+        impl Fn() + Clone + Send + Sync,
+        impl Fn() + Clone + Send + Sync,
+    >,
 ) -> impl IntoView {
     let UseUserMediaReturn {
         stream,
         enabled,
         set_enabled,
         ..
-    } = use_user_media_with_options(UseUserMediaOptions::default().video(
-        VideoTrackConstraints::default().facing_mode(ConstraintExactIdeal::ExactIdeal {
-            exact: None,
-            ideal: Some(FacingMode::Environment),
-        }),
-    ));
+    } = use_user_media_return;
+    drop(use_user_media_return);
 
     Effect::new(move |_| {
         // let media = use_window()
@@ -189,46 +185,31 @@ pub fn Video(
         video_ref,
         canplay,
         move |_| {
-            let video_ref = video_ref.get().unwrap();
-            let canvas_ref = canvas_ref.get().unwrap();
-            let height = f64::from(video_ref.video_height())
-                / (f64::from(video_ref.video_width()) / f64::from(WIDTH));
-            video_ref
-                .dyn_ref::<HtmlElement>()
-                .unwrap()
-                .style()
-                .set_property("height", &format!("{height}px"))
-                .unwrap();
-            video_ref
-                .dyn_ref::<HtmlElement>()
-                .unwrap()
-                .style()
+            let video = video_ref.get().unwrap();
+            let video_style = video.dyn_ref::<HtmlElement>().unwrap().style();
+            let canvas = canvas_ref.get().unwrap();
+            let canvas_style = canvas.dyn_ref::<HtmlElement>().unwrap().style();
+
+            let video_width = f64::from(video.video_width());
+            let video_height = f64::from(video.video_height());
+
+            let aspect = video_height / video_width;
+            let height = (WIDTH as f64 * aspect).round() as u32;
+
+            video_style
                 .set_property("width", &format!("{WIDTH}px"))
                 .unwrap();
-            canvas_ref
-                .dyn_ref::<HtmlElement>()
-                .unwrap()
-                .style()
+            video_style
                 .set_property("height", &format!("{height}px"))
                 .unwrap();
-            canvas_ref
-                .dyn_ref::<HtmlElement>()
-                .unwrap()
-                .style()
+            canvas_style
                 .set_property("width", &format!("{WIDTH}px"))
                 .unwrap();
-            // video_ref
-            //     .set_attribute("width", WIDTH.to_string().as_str())
-            //     .unwrap();
-            // video_ref
-            //     .set_attribute("height", height.to_string().as_str())
-            //     .unwrap();
-            canvas_ref
-                .set_attribute("width", WIDTH.to_string().as_str())
+            canvas_style
+                .set_property("height", &format!("{height}px"))
                 .unwrap();
-            canvas_ref
-                .set_attribute("height", height.to_string().as_str())
-                .unwrap();
+            canvas.set_attribute("width", &WIDTH.to_string()).unwrap();
+            canvas.set_attribute("height", &height.to_string()).unwrap();
         },
         UseEventListenerOptions::default().once(true),
     );
@@ -281,16 +262,22 @@ pub fn Video(
     };
 
     view! {
-      <div class="flex gap-4 justify-around">
+      // class="flex gap-4 justify-around"
+      <div class="flex gap-4 justify-center items-start">
         <video
           node_ref=video_ref
           on:click=toggle_enabled
           controls=false
           autoplay=true
           muted=true
-          class="flex-1 min-w-0 border-2 border-white max-w-[400px]"
+          // class="flex-1 min-w-0 border-2 border-white max-w-[400px]"
+          class="block border-2 border-white"
         />
-        <canvas node_ref=canvas_ref class="flex-1 min-w-0 border-2 border-amber-300 max-w-[400px]" />
+        <canvas
+          node_ref=canvas_ref
+          // class="flex-1 min-w-0 border-2 border-amber-300 max-w-[400px]"
+          class="block border-2 border-amber-300"
+        />
       </div>
       // zoom
       // resolution (width)

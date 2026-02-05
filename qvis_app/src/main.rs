@@ -118,7 +118,7 @@ fn main() {
     thread::spawn(move || server_main(pixel_assignment_ui_tx));
 
     // For some reason highgui doesn't work unless it's on the main thread
-    let puzzle_geometry = puzzle("3x3").into_inner();
+    let puzzle_geometry = puzzle("3x3");
     while let Ok((pixel_assignment_done_tx, image)) = pixel_assignment_ui_rx.recv() {
         let assignment =
             pixel_assignment_ui::pixel_assignment_ui(&puzzle_geometry, &image).unwrap();

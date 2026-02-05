@@ -5,6 +5,6 @@
 - crop highgui on pi
 - todos in pixel_assignment
 - https://crates.io/crates/tokio-cron-scheduler
-
-optional
-- progress
+- distance should be based based on closeness to the border
+- properly size canvas
+- figure out wtf is wrong with toBlob

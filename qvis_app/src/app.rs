@@ -4,6 +4,10 @@ use crate::{
     video::{Video, pixel_assignment_command, take_picture_command},
 };
 use leptos::{html, prelude::*, task::spawn_local};
+use leptos_use::{
+    ConstraintExactIdeal, FacingMode, UseUserMediaOptions, VideoTrackConstraints,
+    use_user_media_with_options,
+};
 use leptos_ws::ChannelSignal;
 use log::{LevelFilter, info, warn};
 use puzzle_theory::puzzle_geometry::parsing::puzzle;
@@ -47,19 +51,26 @@ pub fn App() -> impl IntoView {
             info!("Established connection with server");
         });
         context.set_on_disconnect(move || {
-            warn!("Lost connection with server");
+            warn!("Lost connection with server; trying reconnect");
         });
         context.set_on_reconnect(move || {
             info!("Re-established connection with server");
         });
     }
 
+    let use_user_media_return = use_user_media_with_options(UseUserMediaOptions::default().video(
+        VideoTrackConstraints::default().facing_mode(ConstraintExactIdeal::ExactIdeal {
+            exact: None,
+            ideal: Some(FacingMode::Environment),
+        }),
+    ));
+
     let messages_container = NodeRef::<leptos::html::Div>::new();
     let (overflowing, set_overflowing) = signal(true);
     let puzzle_geometry = puzzle("3x3");
     let video_ref = NodeRef::<html::Video>::new();
     let canvas_ref = NodeRef::<html::Canvas>::new();
-    let (tx, rx) = tokio::sync::watch::channel(None::<CVProcessor>);
+    let (cv_available_tx, cv_available_rx) = tokio::sync::watch::channel(None::<CVProcessor>);
 
     let take_picture_channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).unwrap();
     let take_picture_channel2 = take_picture_channel.clone();
@@ -70,7 +81,9 @@ pub fn App() -> impl IntoView {
     let do_pixel_assignment = move || {
         let video_ref = video_ref.get_untracked().unwrap();
         let canvas_ref = canvas_ref.get_untracked().unwrap();
+        use_user_media_return.set_enabled.set(true);
         spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(250).await;
             let blob = match pixel_assignment_command(&video_ref, &canvas_ref).await {
                 Ok(blob) => blob,
                 Err(e) => {
@@ -84,33 +97,65 @@ pub fn App() -> impl IntoView {
         });
     };
 
-    take_picture_channel
-        .on_client(move |msg: &TakePictureMessage| {
-            let video_ref = video_ref.get_untracked().unwrap();
-            let canvas_ref = canvas_ref.get_untracked().unwrap();
-            info!("Received message {msg:?}");
-            let TakePictureMessage::TakePicture = msg else {
-                return;
-            };
+    {
+        let cv_available_tx = cv_available_tx.clone();
+        take_picture_channel
+            .on_client(move |msg: &TakePictureMessage| {
+                let video_ref = video_ref.get_untracked().unwrap();
+                let canvas_ref = canvas_ref.get_untracked().unwrap();
+                info!("Received message {msg:?}");
 
-            let pixels = take_picture_command(&video_ref, &canvas_ref);
-            let take_picture_channel2 = take_picture_channel2.clone();
-            let mut rx = rx.clone();
+                let take_picture_channel2 = take_picture_channel2.clone();
+                let mut cv_available_rx = cv_available_rx.clone();
+                let cv_available_tx = cv_available_tx.clone();
+                match msg {
+                    TakePictureMessage::TakePicture => {
+                        let pixels = take_picture_command(&video_ref, &canvas_ref);
 
-            spawn_local(async move {
-                if rx.borrow().is_none() {
-                    do_pixel_assignment();
-                    rx.changed().await.unwrap();
+                        spawn_local(async move {
+                            if cv_available_rx.borrow().is_none() {
+                                do_pixel_assignment();
+                                cv_available_rx.changed().await.unwrap();
+                            }
+                            let cv_processor = cv_available_rx.borrow();
+                            let cv_processor = cv_processor.as_ref().unwrap();
+                            let (permutation, confidence) = cv_processor.process_image(pixels);
+                            info!(
+                                "Processed {permutation} with confidence {:.1}%",
+                                confidence * 100.0
+                            );
+                            take_picture_channel2
+                                .send_message(TakePictureMessage::PermutationResult(permutation))
+                                .unwrap();
+                        });
+                    }
+                    TakePictureMessage::Calibrate(permutation) => {
+                        let pixels = take_picture_command(&video_ref, &canvas_ref);
+                        info!("len {}", pixels.len());
+                        let permutation = permutation.clone();
+
+                        spawn_local(async move {
+                            if cv_available_rx.borrow().is_none() {
+                                do_pixel_assignment();
+                                cv_available_rx.changed().await.unwrap();
+                            }
+                            cv_available_tx.send_modify(|maybe_cv_processor| {
+                                let cv_processor = maybe_cv_processor.as_mut().unwrap();
+                                cv_processor.calibrate(&pixels, &permutation);
+                            });
+                            take_picture_channel2
+                                .send_message(TakePictureMessage::Calibrated)
+                                .unwrap();
+                        });
+                    }
+                    m @ (TakePictureMessage::PermutationResult(_)
+                    | TakePictureMessage::Calibrated) => {
+                        warn!("Received {m:?} on client, which should not happen");
+                    }
                 }
-                let cv_processor = rx.borrow();
-                let cv_processor = cv_processor.as_ref().unwrap();
-                let permutation = cv_processor.process_image(pixels).0;
-                take_picture_channel2
-                    .send_message(TakePictureMessage::PermutationResult(permutation))
-                    .unwrap();
-            });
-        })
-        .unwrap();
+            })
+            .unwrap();
+    }
 
     Effect::new(move |_| {
         let pixel_assignment = pixel_assignment_action.value().get();
@@ -135,7 +180,7 @@ pub fn App() -> impl IntoView {
             pixel_assignment.len(),
             pixel_assignment,
         );
-        tx.send_modify(|maybe_cv_processor| {
+        cv_available_tx.send_modify(|maybe_cv_processor| {
             *maybe_cv_processor = Some(cv_processor);
         });
     });
@@ -166,7 +211,7 @@ pub fn App() -> impl IntoView {
         </button>
       </header>
       <main class="flex flex-col gap-4 justify-center mr-4 ml-4 text-center">
-        <Video video_ref canvas_ref pixel_assignment_action do_pixel_assignment/>
+        <Video video_ref canvas_ref pixel_assignment_action do_pixel_assignment use_user_media_return />
         "Messages:"
         <div class="relative h-72 font-mono text-left border-2 border-gray-300">
           <div
@@ -177,7 +222,7 @@ pub fn App() -> impl IntoView {
             node_ref=messages_container
             class="overflow-y-auto h-full [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-thumb]:bg-white"
           >
-            <ul class="pl-4 list-disc list-inside">
+            <ul class="pl-4 list-disc list-inside whitespace-pre-wrap">
               <For each=move || messages.get() key=|msg| msg.0 let((_, msg))>
                 <li>{msg}</li>
               </For>
