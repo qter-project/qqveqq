@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use internment::ArcIntern;
 use puzzle_theory::{permutations::Permutation, puzzle_geometry::PuzzleGeometry};
+use serde::{Deserialize, Serialize};
 
 use crate::{inference::Inference, puzzle_matching::Matcher};
 
@@ -9,14 +10,17 @@ mod inference;
 pub mod puzzle_matching;
 
 /// Processes images for computer vision
+#[derive(Deserialize)]
+#[serde(from = "(usize, Arc<PuzzleGeometry>, Inference)")]
 pub struct CVProcessor {
     image_size: usize,
+    puzzle: Arc<PuzzleGeometry>,
     matcher: Matcher,
     inference: Inference,
 }
 
 #[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[derive(Serialize, Deserialize)]
 pub enum Pixel {
     /// The pixel is not assigned to anything
     Unassigned,
@@ -46,7 +50,8 @@ impl CVProcessor {
         CVProcessor {
             image_size,
             inference: Inference::new(assignment, &puzzle),
-            matcher: Matcher::new(puzzle),
+            matcher: Matcher::new(&puzzle),
+            puzzle,
         }
     }
 
@@ -54,11 +59,36 @@ impl CVProcessor {
     pub fn calibrate(&mut self, image: &[(f64, f64, f64)], state: Permutation) {
         assert_eq!(self.image_size, image.len());
 
-        self.inference.calibrate(image, &state);
+        self.inference
+            .calibrate(image, &state, &self.puzzle.permutation_group());
     }
 
     /// Process an image and return the most likely state that the puzzle appears to be in, along with the confidence in the prediction. This is guaranteed to be a valid member of the group.
     pub fn process_image(&self, image: Box<[(f64, f64, f64)]>) -> (Permutation, f64) {
-        self.matcher.most_likely(&self.inference.infer(&image))
+        self.matcher.most_likely(
+            &self
+                .inference
+                .infer(&image, &self.puzzle.permutation_group()),
+            &self.puzzle,
+        )
+    }
+}
+
+impl Serialize for CVProcessor {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer {
+        (&self.image_size, &self.puzzle, &self.inference).serialize(serializer)
+    }
+}
+
+impl From<(usize, Arc<PuzzleGeometry>, Inference)> for CVProcessor {
+    fn from((image_size, puzzle, inference): (usize, Arc<PuzzleGeometry>, Inference)) -> Self {
+        CVProcessor {
+            image_size,
+            matcher: Matcher::new(&puzzle),
+            puzzle,
+            inference,
+        }
     }
 }

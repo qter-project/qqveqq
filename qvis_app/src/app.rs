@@ -56,7 +56,7 @@ pub fn App() -> impl IntoView {
 
     let messages_container = NodeRef::<leptos::html::Div>::new();
     let (overflowing, set_overflowing) = signal(true);
-    let puzzle_geometry = puzzle("3x3").into_inner();
+    let puzzle_geometry = puzzle("3x3");
     let video_ref = NodeRef::<html::Video>::new();
     let canvas_ref = NodeRef::<html::Canvas>::new();
     let (tx, rx) = tokio::sync::watch::channel(None::<CVProcessor>);

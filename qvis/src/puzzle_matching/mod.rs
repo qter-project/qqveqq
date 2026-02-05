@@ -22,13 +22,13 @@ pub struct Matcher {
 }
 
 impl Matcher {
-    pub fn new(puzzle: Arc<PuzzleGeometry>) -> Matcher {
+    pub fn new(puzzle: &PuzzleGeometry) -> Matcher {
         let data = puzzle.pieces_data();
 
         let orbits = data
             .orbits()
             .iter()
-            .map(|orbit| OrbitMatcher::new(Arc::clone(&puzzle), orbit))
+            .map(|orbit| OrbitMatcher::new(&puzzle, orbit))
             .collect();
 
         Matcher {
@@ -37,12 +37,12 @@ impl Matcher {
         }
     }
 
-    pub fn most_likely(&self, confidences: &[HashMap<ArcIntern<str>, f64>]) -> (Permutation, f64) {
+    pub fn most_likely(&self, confidences: &[HashMap<ArcIntern<str>, f64>], puzzle: &PuzzleGeometry) -> (Permutation, f64) {
         let iters = self
             .orbits
             .iter()
             .map(|v| SavedIter {
-                iter: v.most_likely_matchings(confidences),
+                iter: v.most_likely_matchings(confidences, puzzle),
                 saved: Vec::new(),
             })
             .collect();
@@ -187,11 +187,10 @@ struct OrbitMatcher {
     // Maps the observation (sticker orientation num, color) to all (piece, orientation) that would be consistent with it
     sticker_color_piece: HashMap<(OriNum, ArcIntern<str>), Vec<(usize, usize)>>,
     orbit: OrbitData,
-    puzzle: Arc<PuzzleGeometry>,
 }
 
 impl OrbitMatcher {
-    fn new(puzzle: Arc<PuzzleGeometry>, orbit: &OrbitData) -> OrbitMatcher {
+    fn new(puzzle: &PuzzleGeometry, orbit: &OrbitData) -> OrbitMatcher {
         let pieces_data = puzzle.pieces_data();
         let ori_nums = pieces_data.orientation_numbers();
         let group = puzzle.permutation_group();
@@ -247,14 +246,14 @@ impl OrbitMatcher {
             stab_chain: StabilizerChain::new(&Arc::new(subgroup)),
             sticker_color_piece,
             orbit: orbit.to_owned(),
-            puzzle,
         }
     }
 
-    fn most_likely_matchings(
-        &self,
+    fn most_likely_matchings<'a>(
+        &'a self,
         log_likelihoods: &[HashMap<ArcIntern<str>, f64>],
-    ) -> impl Iterator<Item = (Permutation, f64)> {
+        puzzle: &'a PuzzleGeometry,
+    ) -> impl Iterator<Item = (Permutation, f64)> + 'a {
         // Data for matching piece i to piece j where piece j gives the cost for each possible orientation
         let mut cost_matrix = Array3::zeros([
             self.orbit.pieces().len(),
@@ -268,7 +267,7 @@ impl OrbitMatcher {
             .iter()
             .zip(cost_matrix.axis_iter_mut(Axis(0)))
         {
-            let pieces_data = self.puzzle.pieces_data();
+            let pieces_data = puzzle.pieces_data();
             let ori_nums = pieces_data.orientation_numbers();
 
             for sticker in piece.stickers() {
@@ -293,7 +292,8 @@ impl OrbitMatcher {
             cost_matrix,
             heap,
             cache: None,
-            facelet_count: self.puzzle.permutation_group().facelet_count(),
+            facelet_count: puzzle.permutation_group().facelet_count(),
+            puzzle,
         }
         .dedup_by(|a, b| a.0 == b.0)
         .filter(|(perm, _)| self.stab_chain.is_member(perm.clone()))
@@ -305,6 +305,7 @@ struct MatchIter<'a> {
     cost_matrix: Array3<f64>,
     heap: BinaryHeap<OrbitHeapElt>,
     facelet_count: usize,
+    puzzle: &'a PuzzleGeometry,
     // Save the HeapElt we just returned instead of splitting it and putting it in the heap immediately
     cache: Option<OrbitHeapElt>,
 }
@@ -323,7 +324,7 @@ impl<'a> Iterator for MatchIter<'a> {
             self.heap.pop();
         }
 
-        let data = self.orbit_matcher.puzzle.pieces_data();
+        let data = self.puzzle.pieces_data();
         let ori_nums = data.orientation_numbers();
 
         let mut mapping_comes_from = (0..self.facelet_count).collect_vec();
@@ -468,7 +469,7 @@ impl Ord for OrbitHeapElt {
 mod tests {
     use std::{
         collections::HashMap,
-        sync::{Arc, LazyLock},
+        sync::LazyLock,
     };
 
     use internment::ArcIntern;
@@ -848,7 +849,7 @@ mod tests {
             }
         }
 
-        let (found, ll) = matcher.most_likely(&observation);
+        let (found, ll) = matcher.most_likely(&observation, geometry);
 
         if found == *perm {
             assert_eq!(ll, expected_ll);
@@ -864,10 +865,10 @@ mod tests {
 
     #[test]
     fn solved() {
-        let geometry = puzzle("3x3").into_inner();
+        let geometry = puzzle("3x3");
         let stabchain = StabilizerChain::new(&geometry.permutation_group());
 
-        let matcher = Matcher::new(Arc::clone(&geometry));
+        let matcher = Matcher::new(&geometry);
 
         let mut rng = rand::rngs::SmallRng::from_seed(*b"I love DP & CP (as in dynamic pr");
 

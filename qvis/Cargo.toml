@@ -4,13 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-internment = { version = "0.8.6", features = ["arc"] }
+internment = { version = "0.8.6", features = ["arc", "serde"] }
 itertools = "0.14.0"
-kiddo = "5.2.4"
+kiddo = { version = "5.2.4", features = ["serde"] }
 ndarray = "0.17.1"
-puzzle_theory = { git = "https://github.com/qter-project/puzzle-theory", features = [ "rand" ] }
+puzzle_theory = { git = "https://github.com/qter-project/puzzle-theory", features = [ "rand", "serde" ] }
+serde = { version = "1.0.228", default-features = false, features = ["derive", "rc"] }
+# puzzle_theory = { path = "../../puzzle-theory" }
 rand = "0.9.2"
-serde = { version = "1.0.228", optional = true }
-
-[features]
-serde = ["dep:serde", "internment/serde"]

@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashMap, sync::Arc};
+use std::{cmp::Ordering, collections::HashMap};
 
 use internment::ArcIntern;
 use itertools::Itertools;
@@ -8,6 +8,7 @@ use puzzle_theory::{
     puzzle_geometry::PuzzleGeometry,
 };
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 const CONFIDENCE_PERCENTILE: f64 = 0.2;
 const MAX_NEAREST_N: usize = 10;
@@ -21,15 +22,16 @@ fn white_balance(mut color: (f64, f64, f64), neutral: (f64, f64, f64)) -> (f64, 
     color
 }
 
+#[derive(Serialize, Deserialize)]
 struct Pixel {
     idx: usize,
     kdtrees: HashMap<ArcIntern<str>, KdTree<f64, 3>>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct Inference {
     pixels_by_sticker: Box<[Box<[Pixel]>]>,
     white_balance_by_face: HashMap<ArcIntern<str>, Box<[usize]>>,
-    group: Arc<PermutationGroup>,
     colors: Box<[ArcIntern<str>]>,
 }
 
@@ -85,7 +87,6 @@ impl Inference {
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
-            group,
             colors,
         }
     }
@@ -117,7 +118,7 @@ impl Inference {
             .collect()
     }
 
-    pub fn infer(&self, picture: &[(f64, f64, f64)]) -> Box<[HashMap<ArcIntern<str>, f64>]> {
+    pub fn infer(&self, picture: &[(f64, f64, f64)], group: &PermutationGroup) -> Box<[HashMap<ArcIntern<str>, f64>]> {
         let mut rng = rand::rng();
 
         let mut confidences_by_pixel = self
@@ -133,7 +134,7 @@ impl Inference {
             .iter()
             .enumerate()
             .map(|(idx, v)| {
-                let wb = *wb.get(&self.group.facelet_colors()[idx]).unwrap();
+                let wb = *wb.get(&group.facelet_colors()[idx]).unwrap();
 
                 // Maybe pick random subset
                 for pixel in v {
@@ -175,12 +176,12 @@ impl Inference {
             .collect()
     }
 
-    pub fn calibrate(&mut self, image: &[(f64, f64, f64)], state: &Permutation) {
+    pub fn calibrate(&mut self, image: &[(f64, f64, f64)], state: &Permutation, group: &PermutationGroup) {
         let wb = self.white_balance(image);
 
         for (sticker, pixels) in self.pixels_by_sticker.iter_mut().enumerate() {
-            let wb = *wb.get(&self.group.facelet_colors()[sticker]).unwrap();
-            let color = &self.group.facelet_colors()[state.state().get(sticker)];
+            let wb = *wb.get(&group.facelet_colors()[sticker]).unwrap();
+            let color = &group.facelet_colors()[state.state().get(sticker)];
 
             for pixel in pixels {
                 let (r, g, b) = white_balance(image[pixel.idx], wb);
@@ -257,7 +258,7 @@ pub(crate) fn quickselect<T, R: Rng + ?Sized>(
 mod tests {
     use std::{
         collections::HashMap,
-        sync::{Arc, LazyLock},
+        sync::LazyLock,
     };
 
     use internment::ArcIntern;
@@ -363,15 +364,15 @@ mod tests {
         for _ in 0..30 {
             let perm = stabchain.random(&mut rng);
             simulate_picture(&perm, &group, 0.2, 0.1, &mut rng, &mut img);
-            inference.calibrate(&img, &perm);
+            inference.calibrate(&img, &perm, &group);
         }
 
-        let matcher = Matcher::new(Arc::clone(&puzzle));
+        let matcher = Matcher::new(&puzzle);
 
         for _ in 0..100 {
             let perm = stabchain.random(&mut rng);
             simulate_picture(&perm, &group, 0.2, 0.1, &mut rng, &mut img);
-            assert_eq!(matcher.most_likely(&inference.infer(&img)).0, perm);
+            assert_eq!(matcher.most_likely(&inference.infer(&img, &group), &puzzle).0, perm);
         }
     }
 

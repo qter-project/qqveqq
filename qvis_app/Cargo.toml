@@ -11,7 +11,7 @@ console_error_panic_hook = "0.1.7"
 console_log = "1.0.0"
 leptos = "0.8.15"
 bytes = "1.11.0"
-qvis = { path = "../qvis", features = ["serde"] }
+qvis = { path = "../qvis" }
 puzzle_theory = { git = "https://github.com/qter-project/puzzle-theory", features = ["serde"] }
 getrandom = { version = "0.3.4", features = ["wasm_js"] }
 log = "0.4.29"
