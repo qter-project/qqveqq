@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, collections::HashMap};
+use std::{cmp::Ordering, collections::HashMap, sync::OnceLock};
 
 use internment::ArcIntern;
 use itertools::Itertools;
@@ -28,11 +28,55 @@ struct Pixel {
     kdtrees: HashMap<ArcIntern<str>, KdTree<f64, 3>>,
 }
 
+impl Pixel {
+    fn density(kdtree: &KdTree<f64, 3>, (r, g, b): (f64, f64, f64)) -> Option<f64> {
+        let n = MAX_NEAREST_N
+            .min(kdtree.size() as usize / MAX_FRACTION)
+            .max(1);
+        let nn = kdtree.nearest_n::<SquaredEuclidean>(&[r, g, b], n);
+
+        // https://faculty.washington.edu/yenchic/18W_425/Lec7_knn_basis.pdf
+        // TODO: Try to account for non uniform distributions?
+        const UNIT_SPHERE: f64 = 4. / 3. * core::f64::consts::PI;
+
+        let last = nn.last()?;
+
+        Some(n as f64 / kdtree.size() as f64 * (last.distance.sqrt().powi(3) * UNIT_SPHERE).recip())
+    }
+
+    fn densities(
+        &self,
+        at: (f64, f64, f64),
+        wb: (f64, f64, f64),
+    ) -> impl Iterator<Item = (&ArcIntern<str>, f64)> {
+        self.kdtrees.iter().filter_map(move |(color, kdtree)| {
+            let at = white_balance(at, wb);
+
+            Some((color, Self::density(kdtree, at)?))
+        })
+    }
+
+    fn max_densities(&self) -> impl Iterator<Item = (&ArcIntern<str>, f64)> {
+        self.kdtrees.iter().map(|(color, kdtree)| {
+            (
+                color,
+                kdtree
+                    .iter()
+                    .flat_map(|(_, at)| Pixel::density(kdtree, at.into()))
+                    .max_by(|a, b| a.total_cmp(b))
+                    .unwrap_or(0.),
+            )
+        })
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct Inference {
     pixels_by_sticker: Box<[Box<[Pixel]>]>,
     white_balance_by_face: HashMap<ArcIntern<str>, Box<[usize]>>,
     colors: Box<[ArcIntern<str>]>,
+    #[serde(skip)]
+    max_confidence: OnceLock<f64>,
 }
 
 impl Inference {
@@ -88,6 +132,7 @@ impl Inference {
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
             colors,
+            max_confidence: OnceLock::new(),
         }
     }
 
@@ -118,7 +163,11 @@ impl Inference {
             .collect()
     }
 
-    pub fn infer(&self, picture: &[(f64, f64, f64)], group: &PermutationGroup) -> Box<[HashMap<ArcIntern<str>, f64>]> {
+    pub fn infer(
+        &self,
+        picture: &[(f64, f64, f64)],
+        group: &PermutationGroup,
+    ) -> Box<[HashMap<ArcIntern<str>, f64>]> {
         let mut rng = rand::rng();
 
         let mut confidences_by_pixel = self
@@ -137,37 +186,17 @@ impl Inference {
                 let wb = *wb.get(&group.facelet_colors()[idx]).unwrap();
 
                 // Maybe pick random subset
-                for pixel in v {
-                    for (color, kdtree) in &pixel.kdtrees {
-                        let (r, g, b) = white_balance(picture[pixel.idx], wb);
-                        let n = MAX_NEAREST_N
-                            .min(kdtree.size() as usize / MAX_FRACTION)
-                            .max(1);
-                        let nn = kdtree.nearest_n::<SquaredEuclidean>(&[r, g, b], n);
-
-                        // https://faculty.washington.edu/yenchic/18W_425/Lec7_knn_basis.pdf
-                        // TODO: Try to account for non uniform distributions?
-                        const UNIT_SPHERE: f64 = 4. / 3. * core::f64::consts::PI;
-
-                        if let Some(last) = nn.last() {
-                            let density = n as f64 / kdtree.size() as f64
-                                * (last.distance.powi(3) * UNIT_SPHERE).recip();
-
-                            confidences_by_pixel.get_mut(color).unwrap().push(density);
-                        }
-                    }
+                for (color, density) in v
+                    .iter()
+                    .flat_map(|pixel| pixel.densities(picture[pixel.idx], wb))
+                {
+                    confidences_by_pixel.get_mut(color).unwrap().push(density)
                 }
 
                 confidences_by_pixel
                     .iter_mut()
                     .map(|(k, v)| {
-                        if v.is_empty() {
-                            return (ArcIntern::clone(k), 0.);
-                        }
-
-                        let n = (CONFIDENCE_PERCENTILE * v.len() as f64).floor() as usize;
-                        quickselect(&mut rng, v, f64::total_cmp, n);
-                        let confidence = v[n];
+                        let confidence = representative_confidence(v, &mut rng);
                         v.drain(..);
                         (ArcIntern::clone(k), confidence)
                     })
@@ -176,7 +205,14 @@ impl Inference {
             .collect()
     }
 
-    pub fn calibrate(&mut self, image: &[(f64, f64, f64)], state: &Permutation, group: &PermutationGroup) {
+    pub fn calibrate(
+        &mut self,
+        image: &[(f64, f64, f64)],
+        state: &Permutation,
+        group: &PermutationGroup,
+    ) {
+        self.max_confidence = OnceLock::new();
+
         let wb = self.white_balance(image);
 
         for (sticker, pixels) in self.pixels_by_sticker.iter_mut().enumerate() {
@@ -189,6 +225,50 @@ impl Inference {
             }
         }
     }
+
+    // TODO: Maybe make this work? The problem is that it's possible for the estimated density to approach infinity meaning there is no maximum.
+    // pub fn max_confidence(&self) -> f64 {
+    //     *self.max_confidence.get_or_init(|| {
+    //         let mut rng = rand::rng();
+
+    //         let mut confidences_by_pixel = self
+    //             .colors
+    //             .iter()
+    //             .cloned()
+    //             .map(|v| (v, Vec::<f64>::new()))
+    //             .collect::<HashMap<_, _>>();
+
+    //         self.pixels_by_sticker
+    //             .iter()
+    //             .map(|v| {
+    //                 // Maybe pick random subset
+    //                 for (color, density) in v.iter().flat_map(|pixel| pixel.max_densities()) {
+    //                     confidences_by_pixel.get_mut(color).unwrap().push(density)
+    //                 }
+
+    //                 confidences_by_pixel
+    //                     .iter_mut()
+    //                     .map(|(_, v)| {
+    //                         let confidence = representative_confidence(v, &mut rng);
+    //                         v.drain(..);
+    //                         confidence
+    //                     })
+    //                     .max_by(|a, b| a.total_cmp(b))
+    //                     .unwrap_or(0.)
+    //             })
+    //             .sum()
+    //     })
+    // }
+}
+
+fn representative_confidence<R: Rng + ?Sized>(confidences: &mut [f64], rng: &mut R) -> f64 {
+    if confidences.is_empty() {
+        return 0.;
+    }
+
+    let n = (CONFIDENCE_PERCENTILE * confidences.len() as f64).floor() as usize;
+    quickselect(rng, confidences, f64::total_cmp, n);
+    confidences[n]
 }
 
 // This quickselect code is copied from <https://gitlab.com/hrovnyak/nmr-schedule>
@@ -256,10 +336,7 @@ pub(crate) fn quickselect<T, R: Rng + ?Sized>(
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::HashMap,
-        sync::LazyLock,
-    };
+    use std::{collections::HashMap, sync::LazyLock};
 
     use internment::ArcIntern;
     use puzzle_theory::{
@@ -372,7 +449,8 @@ mod tests {
         for _ in 0..100 {
             let perm = stabchain.random(&mut rng);
             simulate_picture(&perm, &group, 0.2, 0.1, &mut rng, &mut img);
-            assert_eq!(matcher.most_likely(&inference.infer(&img, &group), &puzzle).0, perm);
+            let (perm_inferred, _) = matcher.most_likely(&inference.infer(&img, &group), &puzzle);
+            assert_eq!(perm_inferred, perm);
         }
     }
 

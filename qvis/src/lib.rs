@@ -19,8 +19,7 @@ pub struct CVProcessor {
     inference: Inference,
 }
 
-#[derive(Debug, Clone)]
-#[derive(Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Pixel {
     /// The pixel is not assigned to anything
     Unassigned,
@@ -77,8 +76,15 @@ impl CVProcessor {
 impl Serialize for CVProcessor {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: serde::Serializer {
-        (&self.image_size, &self.puzzle, &self.inference).serialize(serializer)
+        S: serde::Serializer,
+    {
+        let CVProcessor {
+            image_size,
+            puzzle,
+            matcher: _,
+            inference,
+        } = self;
+        (&image_size, &puzzle, &inference).serialize(serializer)
     }
 }
 
