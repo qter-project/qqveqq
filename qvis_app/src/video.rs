@@ -1,26 +1,48 @@
-use leptos::{
-    ev::{Targeted, canplay},
-    html,
-    prelude::*,
-};
+use leptos::{ev::Targeted, html, prelude::*};
 use leptos_use::{UseEventListenerOptions, UseUserMediaReturn, use_event_listener_with_options};
 use log::{info, warn};
 use qvis::Pixel;
 use send_wrapper::SendWrapper;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use tokio::sync::Notify;
 use wasm_bindgen::{JsCast, JsValue, prelude::Closure};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
-use web_sys::{
-    Blob, CanvasRenderingContext2d, Event, FormData, HtmlCanvasElement, HtmlElement,
-    HtmlSelectElement, HtmlVideoElement, MediaDeviceKind,
-    js_sys::{self, Promise},
-};
+use web_sys::js_sys;
 
 const WIDTH: u32 = 850;
 
-fn draw_video_on_canvas(
-    canvas_ref: &HtmlCanvasElement,
-    video_ref: &HtmlVideoElement,
-) -> CanvasRenderingContext2d {
+#[derive(Default)]
+pub struct OnceBarrier {
+    ready: AtomicBool,
+    notify: Notify,
+}
+
+impl OnceBarrier {
+    pub fn new() -> Arc<Self> {
+        Arc::default()
+    }
+
+    fn set_ready(&self) {
+        self.ready.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+
+    async fn wait(&self) {
+        if self.ready.load(Ordering::Acquire) {
+            return;
+        }
+        self.notify.notified().await;
+    }
+}
+
+async fn draw_video_on_canvas(
+    canvas_ref: &web_sys::HtmlCanvasElement,
+    video_ref: &web_sys::HtmlVideoElement,
+    playing_barrier: &OnceBarrier,
+) -> web_sys::CanvasRenderingContext2d {
     let opts = js_sys::Object::new();
     js_sys::Reflect::set(&opts, &"willReadFrequently".into(), &true.into()).unwrap();
     js_sys::Reflect::set(&opts, &"alpha".into(), &false.into()).unwrap();
@@ -28,9 +50,9 @@ fn draw_video_on_canvas(
         .get_context_with_context_options("2d", &opts)
         .unwrap()
         .unwrap()
-        .dyn_into::<CanvasRenderingContext2d>()
+        .dyn_into::<web_sys::CanvasRenderingContext2d>()
         .unwrap();
-
+    playing_barrier.wait().await;
     ctx.draw_image_with_html_video_element_and_dw_and_dh(
         video_ref,
         0.0,
@@ -42,11 +64,12 @@ fn draw_video_on_canvas(
     ctx
 }
 
-pub(crate) fn take_picture_command(
-    video_ref: &HtmlVideoElement,
-    canvas_ref: &HtmlCanvasElement,
+pub(crate) async fn take_picture_command(
+    video_ref: &web_sys::HtmlVideoElement,
+    canvas_ref: &web_sys::HtmlCanvasElement,
+    playing_barrier: &OnceBarrier,
 ) -> Box<[(f64, f64, f64)]> {
-    let ctx = draw_video_on_canvas(canvas_ref, video_ref);
+    let ctx = draw_video_on_canvas(canvas_ref, video_ref, playing_barrier).await;
 
     let image_data = ctx
         .get_image_data(
@@ -74,14 +97,15 @@ pub(crate) fn take_picture_command(
 }
 
 pub(crate) async fn pixel_assignment_command(
-    video_ref: &HtmlVideoElement,
-    canvas_ref: &HtmlCanvasElement,
-) -> Result<Blob, JsValue> {
-    draw_video_on_canvas(canvas_ref, video_ref);
+    video_ref: &web_sys::HtmlVideoElement,
+    canvas_ref: &web_sys::HtmlCanvasElement,
+    playing_barrier: &OnceBarrier,
+) -> Result<web_sys::Blob, JsValue> {
+    draw_video_on_canvas(canvas_ref, video_ref, playing_barrier).await;
 
-    let promise = Promise::new(&mut |resolve, reject| {
+    let promise = js_sys::Promise::new(&mut |resolve, reject| {
         let resolve = resolve.clone();
-        let closure = Closure::once(move |blob: Option<Blob>| match blob {
+        let closure = Closure::once(move |blob: Option<web_sys::Blob>| match blob {
             Some(blob) => {
                 resolve.call1(&JsValue::NULL, &blob).unwrap();
             }
@@ -95,13 +119,13 @@ pub(crate) async fn pixel_assignment_command(
             .to_blob_with_type_and_encoder_options(
                 closure.as_ref().unchecked_ref(),
                 "image/webp",
-                &JsValue::from_f64(0.8),
+                &JsValue::from_f64(1.0),
             )
             .unwrap();
         closure.forget();
     });
     let blob = JsFuture::from(promise).await?;
-    Ok(blob.dyn_into::<Blob>().unwrap())
+    Ok(blob.dyn_into::<web_sys::Blob>().unwrap())
 }
 
 async fn all_camera_devices() -> Result<Vec<SendWrapper<web_sys::MediaDeviceInfo>>, JsValue> {
@@ -118,7 +142,7 @@ async fn all_camera_devices() -> Result<Vec<SendWrapper<web_sys::MediaDeviceInfo
         .iter()
         .filter_map(|device_js| {
             let device_info: web_sys::MediaDeviceInfo = device_js.dyn_into().ok()?;
-            if device_info.kind() == MediaDeviceKind::Videoinput {
+            if device_info.kind() == web_sys::MediaDeviceKind::Videoinput {
                 Some(SendWrapper::new(device_info))
             } else {
                 None
@@ -131,12 +155,13 @@ async fn all_camera_devices() -> Result<Vec<SendWrapper<web_sys::MediaDeviceInfo
 pub fn Video(
     video_ref: NodeRef<html::Video>,
     canvas_ref: NodeRef<html::Canvas>,
-    pixel_assignment_action: Action<FormData, Result<Box<[Pixel]>, ServerFnError>>,
+    pixel_assignment_action: Action<web_sys::FormData, Result<Box<[Pixel]>, ServerFnError>>,
     do_pixel_assignment: impl Fn() + 'static,
     use_user_media_return: UseUserMediaReturn<
         impl Fn() + Clone + Send + Sync,
         impl Fn() + Clone + Send + Sync,
     >,
+    playing_barrier: Arc<OnceBarrier>,
 ) -> impl IntoView {
     let UseUserMediaReturn {
         stream,
@@ -183,12 +208,12 @@ pub fn Video(
 
     let _ = use_event_listener_with_options(
         video_ref,
-        canplay,
+        leptos::ev::loadedmetadata,
         move |_| {
             let video = video_ref.get().unwrap();
-            let video_style = video.dyn_ref::<HtmlElement>().unwrap().style();
+            let video_style = video.dyn_ref::<web_sys::HtmlElement>().unwrap().style();
             let canvas = canvas_ref.get().unwrap();
-            let canvas_style = canvas.dyn_ref::<HtmlElement>().unwrap().style();
+            let canvas_style = canvas.dyn_ref::<web_sys::HtmlElement>().unwrap().style();
 
             let video_width = f64::from(video.video_width());
             let video_height = f64::from(video.video_height());
@@ -214,12 +239,25 @@ pub fn Video(
         UseEventListenerOptions::default().once(true),
     );
 
+    let _ = use_event_listener_with_options(
+        video_ref,
+        leptos::ev::playing,
+        move |_| {
+            let playing_barrier = Arc::clone(&playing_barrier);
+            spawn_local(async move {
+                gloo_timers::future::TimeoutFuture::new(500).await;
+                playing_barrier.set_ready();
+            });
+        },
+        UseEventListenerOptions::default().once(true),
+    );
+
     let camera_devices =
         LocalResource::new(move || async move { all_camera_devices().await.unwrap() });
     let camera_device =
         LocalResource::new(move || async move { camera_devices.await.first().cloned() });
 
-    let select_camera_device = move |ev: Targeted<Event, HtmlSelectElement>| {
+    let select_camera_device = move |ev: Targeted<web_sys::Event, web_sys::HtmlSelectElement>| {
         let v = ev.target().value();
         let selected_camera_device = camera_devices
             .get()

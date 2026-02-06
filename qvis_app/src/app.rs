@@ -1,6 +1,6 @@
 use crate::{
     messages_logger::MessagesLogger,
-    video::{Video, pixel_assignment_command, take_picture_command},
+    video::{OnceBarrier, Video, pixel_assignment_command, take_picture_command},
 };
 use bytes::Bytes;
 use leptos::{html, prelude::*, task::spawn_local};
@@ -15,7 +15,6 @@ use qvis::{CVProcessor, Pixel};
 use serde::{Deserialize, Serialize};
 use server_fn::codec::{MultipartData, MultipartFormData};
 use std::sync::Arc;
-use web_sys::FormData;
 
 pub const TAKE_PICTURE_CHANNEL: &str = "take_picture_channel";
 
@@ -82,39 +81,46 @@ pub fn App() -> impl IntoView {
     ));
 
     let messages_container = NodeRef::<leptos::html::Div>::new();
-    let (overflowing, set_overflowing) = signal(true);
-    let puzzle_geometry = puzzle("3x3");
     let video_ref = NodeRef::<html::Video>::new();
     let canvas_ref = NodeRef::<html::Canvas>::new();
+    let (overflowing, set_overflowing) = signal(true);
     let (cv_available_tx, cv_available_rx) = tokio::sync::watch::channel(None::<CVProcessor>);
+    let playing_barrier = OnceBarrier::new();
+    let puzzle_geometry = puzzle("3x3");
 
     let take_picture_channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).unwrap();
     let take_picture_channel2 = take_picture_channel.clone();
 
     let pixel_assignment_action =
-        Action::new_local(|data: &FormData| pixel_assignment(data.clone().into()));
+        Action::new_local(|data: &web_sys::FormData| pixel_assignment(data.clone().into()));
 
-    let do_pixel_assignment = move || {
-        let video_ref = video_ref.get_untracked().unwrap();
-        let canvas_ref = canvas_ref.get_untracked().unwrap();
-        use_user_media_return.set_enabled.set(true);
-        spawn_local(async move {
-            gloo_timers::future::TimeoutFuture::new(250).await;
-            let blob = match pixel_assignment_command(&video_ref, &canvas_ref).await {
-                Ok(blob) => blob,
-                Err(e) => {
-                    warn!("Failed to capture image: {e:?}");
-                    return;
-                }
-            };
-            let form_data = FormData::new().unwrap();
-            form_data.append_with_blob("qvis_picture", &blob).unwrap();
-            pixel_assignment_action.dispatch_local(form_data);
-        });
+    let do_pixel_assignment = {
+        let playing_barrier = Arc::clone(&playing_barrier);
+        move || {
+            let video_ref = video_ref.get_untracked().unwrap();
+            let canvas_ref = canvas_ref.get_untracked().unwrap();
+            use_user_media_return.set_enabled.set(true);
+            let playing_barrier = Arc::clone(&playing_barrier);
+            spawn_local(async move {
+                let blob = match pixel_assignment_command(&video_ref, &canvas_ref, &playing_barrier)
+                    .await
+                {
+                    Ok(blob) => blob,
+                    Err(e) => {
+                        warn!("Failed to capture image: {e:?}");
+                        return;
+                    }
+                };
+                let form_data = web_sys::FormData::new().unwrap();
+                form_data.append_with_blob("qvis_picture", &blob).unwrap();
+                pixel_assignment_action.dispatch_local(form_data);
+            });
+        }
     };
-
     {
         let cv_available_tx = cv_available_tx.clone();
+        let playing_barrier = Arc::clone(&playing_barrier);
+        let do_pixel_assignment = do_pixel_assignment.clone();
         take_picture_channel
             .on_client(move |msg: &TakePictureMessage| {
                 let video_ref = video_ref.get_untracked().unwrap();
@@ -126,9 +132,12 @@ pub fn App() -> impl IntoView {
                 let cv_available_tx = cv_available_tx.clone();
                 match msg {
                     TakePictureMessage::TakePicture => {
-                        let pixels = take_picture_command(&video_ref, &canvas_ref);
-
+                        let playing_barrier = Arc::clone(&playing_barrier);
+                        let do_pixel_assignment = do_pixel_assignment.clone();
                         spawn_local(async move {
+                            let pixels =
+                                take_picture_command(&video_ref, &canvas_ref, &playing_barrier)
+                                    .await;
                             if cv_available_rx.borrow().is_none() {
                                 do_pixel_assignment();
                                 cv_available_rx.changed().await.unwrap();
@@ -146,11 +155,13 @@ pub fn App() -> impl IntoView {
                         });
                     }
                     TakePictureMessage::Calibrate(permutation) => {
-                        let pixels = take_picture_command(&video_ref, &canvas_ref);
-                        info!("len {}", pixels.len());
                         let permutation = permutation.clone();
-
+                        let playing_barrier = Arc::clone(&playing_barrier);
+                        let do_pixel_assignment = do_pixel_assignment.clone();
                         spawn_local(async move {
+                            let pixels =
+                                take_picture_command(&video_ref, &canvas_ref, &playing_barrier)
+                                    .await;
                             if cv_available_rx.borrow().is_none() {
                                 do_pixel_assignment();
                                 cv_available_rx.changed().await.unwrap();
@@ -227,7 +238,7 @@ pub fn App() -> impl IntoView {
         </button>
       </header>
       <main class="flex flex-col gap-4 justify-center mr-4 ml-4 text-center">
-        <Video video_ref canvas_ref pixel_assignment_action do_pixel_assignment use_user_media_return />
+        <Video video_ref canvas_ref pixel_assignment_action do_pixel_assignment use_user_media_return playing_barrier />
         "Messages:"
         <div class="relative h-72 font-mono text-left border-2 border-gray-300">
           <div

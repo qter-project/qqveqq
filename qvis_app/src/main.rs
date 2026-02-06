@@ -121,16 +121,12 @@ async fn robot_tui(server_signals: &mut WsSignals) {
     let mut stdout = tokio::io::stdout();
     while let Ok(Some(line)) = stdin.next_line().await {
         if line.starts_with("TAKE_PICTURE") {
-            let done_string = take_picture(server_signals, None).await.map(Option::unwrap)
-                .map(|p| p.to_string())
+            let done_string = take_picture(server_signals, None)
+                .await
+                .map(|p| p.unwrap().to_string())
                 .unwrap_or_else(|e| e.to_string());
             stdout
-                .write_all(
-                    format!(
-                        "DONE {done_string}\n",
-                    )
-                    .as_bytes(),
-                )
+                .write_all(format!("DONE {done_string}\n").as_bytes())
                 .await
                 .unwrap();
         } else if line.starts_with("CALIBRATE") {
@@ -148,7 +144,7 @@ async fn robot_tui(server_signals: &mut WsSignals) {
             };
 
             stdout
-                .write_all(format!("DONE {done_string}\n",).as_bytes())
+                .write_all(format!("DONE {done_string}\n").as_bytes())
                 .await
                 .unwrap();
         } else {
