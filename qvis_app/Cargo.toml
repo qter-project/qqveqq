@@ -63,7 +63,9 @@ ssr = [
     "dep:opencv",
     "leptos/ssr",
     "leptos_ws/ssr",
-    "leptos-use/ssr"
+    "leptos-use/ssr",
+    "tokio/io-std",
+    "tokio/io-util"
 ]
 
 [package.metadata.leptos]

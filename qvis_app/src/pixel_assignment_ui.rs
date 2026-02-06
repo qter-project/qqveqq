@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use internment::ArcIntern;
+use log::info;
 use opencv::{
     core::{BORDER_CONSTANT, CV_8UC1, CV_8UC3, Point, Rect, Scalar, Size, Vec3b},
     highgui,
@@ -440,7 +441,7 @@ fn submit_button_callback(state: &mut State) -> opencv::Result<()> {
             };
     }
 
-    leptos::logging::log!("Assigned {count} pixels",);
+    info!("Assigned {count} pixels",);
 
     if state.assigning_sticker_idx == state.stickers_to_assign.len() {
         state.assigning_white_balance_idx += 1;
@@ -699,7 +700,7 @@ pub fn pixel_assignment_ui(
             }
             match &state.ui {
                 UIState::Finished => {
-                    leptos::logging::log!("Finished pixel assignment UI");
+                    info!("Finished pixel assignment UI");
                     break Ok(state.pixel_assignment.clone());
                 }
                 UIState::OpenCVError(e) => {

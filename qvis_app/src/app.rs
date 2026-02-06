@@ -1,8 +1,8 @@
 use crate::{
     messages_logger::MessagesLogger,
-    server_fns::{TAKE_PICTURE_CHANNEL, TakePictureMessage, pixel_assignment},
     video::{Video, pixel_assignment_command, take_picture_command},
 };
+use bytes::Bytes;
 use leptos::{html, prelude::*, task::spawn_local};
 use leptos_use::{
     ConstraintExactIdeal, FacingMode, UseUserMediaOptions, VideoTrackConstraints,
@@ -10,10 +10,26 @@ use leptos_use::{
 };
 use leptos_ws::ChannelSignal;
 use log::{LevelFilter, info, warn};
-use puzzle_theory::puzzle_geometry::parsing::puzzle;
+use puzzle_theory::{permutations::Permutation, puzzle_geometry::parsing::puzzle};
 use qvis::{CVProcessor, Pixel};
+use serde::{Deserialize, Serialize};
+use server_fn::codec::{MultipartData, MultipartFormData};
 use std::sync::Arc;
 use web_sys::FormData;
+
+pub const TAKE_PICTURE_CHANNEL: &str = "take_picture_channel";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TakePictureMessage {
+    // Request
+    TakePicture,
+    Calibrate(Permutation),
+    // Response
+    // TODO:
+    // QvisAppError,
+    PermutationResult(Permutation),
+    Calibrated,
+}
 
 pub fn shell(options: LeptosOptions) -> impl IntoView {
     view! {
@@ -231,4 +247,29 @@ pub fn App() -> impl IntoView {
         </div>
       </main>
     }
+}
+
+#[server(
+  input = MultipartFormData,
+)]
+pub async fn pixel_assignment(data: MultipartData) -> Result<Box<[Pixel]>, ServerFnError> {
+    let mut data = data.into_inner().unwrap();
+    let field = data
+        .next_field()
+        .await
+        .map_err(ServerFnError::new)?
+        .unwrap();
+    let bytes = field.bytes().await?;
+
+    let pixel_assignment_ui_tx = use_context::<
+        std::sync::mpsc::Sender<(tokio::sync::oneshot::Sender<Box<[Pixel]>>, Bytes)>,
+    >()
+    .unwrap();
+    let (pixel_assignment_done_tx, pixel_assignment_done_rx) = tokio::sync::oneshot::channel();
+    pixel_assignment_ui_tx
+        .send((pixel_assignment_done_tx, bytes))
+        .unwrap();
+    let pixel_assignment = pixel_assignment_done_rx.await.unwrap();
+
+    Ok(pixel_assignment)
 }

@@ -10,7 +10,6 @@ pub mod log_error_panic_hook;
 pub mod messages_logger;
 #[cfg(feature = "ssr")]
 pub mod pixel_assignment_ui;
-pub mod server_fns;
 pub mod video;
 
 #[cfg(feature = "hydrate")]

@@ -1,6 +1,8 @@
 use log::error;
-use std::panic::{self, PanicHookInfo};
-use std::sync::Once;
+use std::{
+    panic::{self, PanicHookInfo},
+    sync::Once,
+};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -15,7 +17,7 @@ extern "C" {
 }
 
 fn hook_impl(info: &PanicHookInfo) {
-    error!("{info:?}\n\n{}", Error::new().stack());
+    error!("{info}\n\n{}", Error::new().stack());
 }
 
 pub fn set_once() {
