@@ -44,7 +44,6 @@ version = "0.3.83"
 features = [
     "MediaDeviceInfo",
     "HtmlElement",
-    "CssStyleDeclaration",
     "CanvasRenderingContext2d",
     "ImageData",
     "MediaDeviceKind",

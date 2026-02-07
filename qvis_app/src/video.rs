@@ -210,31 +210,20 @@ pub fn Video(
         video_ref,
         leptos::ev::loadedmetadata,
         move |_| {
-            let video = video_ref.get().unwrap();
-            let video_style = video.dyn_ref::<web_sys::HtmlElement>().unwrap().style();
-            let canvas = canvas_ref.get().unwrap();
-            let canvas_style = canvas.dyn_ref::<web_sys::HtmlElement>().unwrap().style();
+            let video_ref = video_ref.get().unwrap();
+            let canvas_ref = canvas_ref.get().unwrap();
 
-            let video_width = f64::from(video.video_width());
-            let video_height = f64::from(video.video_height());
+            let video_width = f64::from(video_ref.video_width());
+            let video_height = f64::from(video_ref.video_height());
 
             let aspect = video_height / video_width;
-            let height = (WIDTH as f64 * aspect).round() as u32;
+            #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+            let height = (f64::from(WIDTH) * aspect).round() as u32;
 
-            video_style
-                .set_property("width", &format!("{WIDTH}px"))
-                .unwrap();
-            video_style
-                .set_property("height", &format!("{height}px"))
-                .unwrap();
-            canvas_style
-                .set_property("width", &format!("{WIDTH}px"))
-                .unwrap();
-            canvas_style
-                .set_property("height", &format!("{height}px"))
-                .unwrap();
-            canvas.set_attribute("width", &WIDTH.to_string()).unwrap();
-            canvas.set_attribute("height", &height.to_string()).unwrap();
+            canvas_ref.set_attribute("width", &WIDTH.to_string()).unwrap();
+            canvas_ref.set_attribute("height", &height.to_string()).unwrap();
+            video_ref.set_attribute("width", &WIDTH.to_string()).unwrap();
+            video_ref.set_attribute("height", &height.to_string()).unwrap();
         },
         UseEventListenerOptions::default().once(true),
     );
@@ -283,9 +272,6 @@ pub fn Video(
         spawn_local(async move {
             if let Some(device) = stream.get_untracked() {
                 for track in device.unwrap().get_tracks() {
-                    // info!("{track:?}");
-                    // info!("{opt2:?}");
-                    // info!("{:?}", opt2.to_string());
                     wasm_bindgen_futures::JsFuture::from(
                         track
                             .unchecked_ref::<web_sys::MediaStreamTrack>()
@@ -300,21 +286,18 @@ pub fn Video(
     };
 
     view! {
-      // class="flex gap-4 justify-around"
-      <div class="flex gap-4 justify-center items-start">
+      <div class="flex gap-4 justify-around">
         <video
           node_ref=video_ref
           on:click=toggle_enabled
           controls=false
           autoplay=true
           muted=true
-          // class="flex-1 min-w-0 border-2 border-white max-w-[400px]"
-          class="block border-2 border-white"
+          class="flex-1 min-w-0 border-2 border-white"
         />
         <canvas
           node_ref=canvas_ref
-          // class="flex-1 min-w-0 border-2 border-amber-300 max-w-[400px]"
-          class="block border-2 border-amber-300"
+          class="flex-1 min-w-0 border-2 border-amber-300"
         />
       </div>
       // zoom
