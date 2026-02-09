@@ -5,8 +5,8 @@ use crate::{
 use bytes::Bytes;
 use leptos::{html, prelude::*, task::spawn_local};
 use leptos_use::{
-    ConstraintExactIdeal, FacingMode, UseUserMediaOptions, VideoTrackConstraints,
-    use_user_media_with_options,
+    ConstraintExactIdeal, FacingMode, UseUserMediaOptions, UseUserMediaReturn,
+    VideoTrackConstraints, use_user_media_with_options,
 };
 use leptos_ws::ChannelSignal;
 use log::{LevelFilter, info, warn};
@@ -96,21 +96,24 @@ pub fn App() -> impl IntoView {
 
     let do_pixel_assignment = {
         let playing_barrier = Arc::clone(&playing_barrier);
+        let UseUserMediaReturn {
+            enabled: video_enabled,
+            set_enabled: set_video_enabled,
+            ..
+        } = use_user_media_return;
         move || {
             let video_ref = video_ref.get_untracked().unwrap();
             let canvas_ref = canvas_ref.get_untracked().unwrap();
-            use_user_media_return.set_enabled.set(true);
             let playing_barrier = Arc::clone(&playing_barrier);
             spawn_local(async move {
-                let blob = match pixel_assignment_command(&video_ref, &canvas_ref, &playing_barrier)
-                    .await
-                {
-                    Ok(blob) => blob,
-                    Err(e) => {
-                        warn!("Failed to capture image: {e:?}");
-                        return;
-                    }
-                };
+                let blob = pixel_assignment_command(
+                    &video_ref,
+                    &canvas_ref,
+                    video_enabled,
+                    set_video_enabled,
+                    &playing_barrier,
+                )
+                .await;
                 let form_data = web_sys::FormData::new().unwrap();
                 form_data.append_with_blob("qvis_picture", &blob).unwrap();
                 pixel_assignment_action.dispatch_local(form_data);
@@ -130,14 +133,24 @@ pub fn App() -> impl IntoView {
                 let take_picture_channel2 = take_picture_channel2.clone();
                 let mut cv_available_rx = cv_available_rx.clone();
                 let cv_available_tx = cv_available_tx.clone();
+                let UseUserMediaReturn {
+                    enabled: video_enabled,
+                    set_enabled: set_video_enabled,
+                    ..
+                } = use_user_media_return;
                 match msg {
                     TakePictureMessage::TakePicture => {
                         let playing_barrier = Arc::clone(&playing_barrier);
                         let do_pixel_assignment = do_pixel_assignment.clone();
                         spawn_local(async move {
-                            let pixels =
-                                take_picture_command(&video_ref, &canvas_ref, &playing_barrier)
-                                    .await;
+                            let pixels = take_picture_command(
+                                &video_ref,
+                                &canvas_ref,
+                                video_enabled,
+                                set_video_enabled,
+                                &playing_barrier,
+                            )
+                            .await;
                             if cv_available_rx.borrow().is_none() {
                                 do_pixel_assignment();
                                 cv_available_rx.changed().await.unwrap();
@@ -159,9 +172,14 @@ pub fn App() -> impl IntoView {
                         let playing_barrier = Arc::clone(&playing_barrier);
                         let do_pixel_assignment = do_pixel_assignment.clone();
                         spawn_local(async move {
-                            let pixels =
-                                take_picture_command(&video_ref, &canvas_ref, &playing_barrier)
-                                    .await;
+                            let pixels = take_picture_command(
+                                &video_ref,
+                                &canvas_ref,
+                                video_enabled,
+                                set_video_enabled,
+                                &playing_barrier,
+                            )
+                            .await;
                             if cv_available_rx.borrow().is_none() {
                                 do_pixel_assignment();
                                 cv_available_rx.changed().await.unwrap();

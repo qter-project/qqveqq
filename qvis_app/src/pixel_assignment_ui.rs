@@ -50,7 +50,6 @@ struct State {
     erosion_kernel: Mat,
     erosion_kernel_times_two: Mat,
     displayed_img: Mat,
-    mask_roi: Rect,
     pixel_assignment: Box<[Pixel]>,
     stickers_to_assign: Vec<(Face, Vec<ArcIntern<str>>)>,
     white_balances_to_assign: Vec<Face>,
@@ -62,6 +61,8 @@ struct State {
     maybe_drag_xy: Option<(i32, i32)>,
     maybe_xy: Option<(i32, i32)>,
     dragging: bool,
+    selecting_crop: bool,
+    maybe_crop: Option<Rect>,
     ui: UIState,
 }
 
@@ -95,8 +96,8 @@ fn outer_index_to_inner_index(outer: &Mat, inner: &Rect, outer_index: usize) -> 
 
     let outer_row = outer_index / outer_cols;
     let outer_col = outer_index % outer_cols;
-    let inner_row = outer_row - inner.y as usize;
-    let inner_col = outer_col - inner.x as usize;
+    let inner_row = outer_row.checked_sub(inner.y as usize)?;
+    let inner_col = outer_col.checked_sub(inner.x as usize)?;
 
     let ret = inner_row * inner_cols + inner_col;
     if ret >= inner_cols * inner_rows {
@@ -107,6 +108,7 @@ fn outer_index_to_inner_index(outer: &Mat, inner: &Rect, outer_index: usize) -> 
 }
 
 fn update_display(state: &mut State) -> opencv::Result<()> {
+    let mask_roi = Rect::new(2, 2, state.img.cols(), state.img.rows());
     state.img.copy_to(&mut state.displayed_img)?;
     let ran;
     let mut nonzeroes: Vec<usize>;
@@ -128,7 +130,7 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
             + PI * 360.0 / PI * 20.0) as u16;
         let perm6 = perm6_from_number(angle);
 
-        Mat::roi_mut(&mut state.grayscale_mask, state.mask_roi)?.set_to_def(&Scalar::all(0.0))?;
+        Mat::roi_mut(&mut state.grayscale_mask, mask_roi)?.set_to_def(&Scalar::all(0.0))?;
         imgproc::flood_fill_mask(
             &mut state.img,
             &mut state.grayscale_mask,
@@ -172,15 +174,15 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
             BORDER_CONSTANT,
             imgproc::morphology_default_border_value()?,
         )?;
-        if opencv::core::has_non_zero(&Mat::roi(&state.cleaned_grayscale_mask, state.mask_roi)?)? {
+        if opencv::core::has_non_zero(&Mat::roi(&state.cleaned_grayscale_mask, mask_roi)?)? {
             *state
                 .cleaned_grayscale_mask
-                .at_2d_mut::<u8>(drag_origin_y + 1, drag_origin_x + 1)? =
+                .at_2d_mut::<u8>(drag_origin_y + 2, drag_origin_x + 2)? =
                 MAX_PIXEL_VALUE.try_into().unwrap();
 
-            Mat::roi_mut(&mut state.tmp_mask, state.mask_roi)?.set_to_def(&Scalar::all(0.0))?;
+            Mat::roi_mut(&mut state.tmp_mask, mask_roi)?.set_to_def(&Scalar::all(0.0))?;
             let mut cleaned_grayscale_mask_cropped_mut =
-                Mat::roi_mut(&mut state.cleaned_grayscale_mask, state.mask_roi)?;
+                Mat::roi_mut(&mut state.cleaned_grayscale_mask, mask_roi)?;
             imgproc::flood_fill_mask(
                 &mut cleaned_grayscale_mask_cropped_mut,
                 &mut state.tmp_mask,
@@ -282,11 +284,7 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
             .enumerate()
             .filter_map(|(i, value)| {
                 if value == u8::try_from(MAX_PIXEL_VALUE).unwrap() {
-                    outer_index_to_inner_index(
-                        mask_to_randomly_sample,
-                        &state.mask_roi,
-                        i,
-                    )
+                    outer_index_to_inner_index(mask_to_randomly_sample, &mask_roi, i)
                 } else {
                     None
                 }
@@ -367,14 +365,13 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
         display_instructions(false)?;
     }
     if ran {
-        let cleaned_grayscale_mask_cropped =
-            Mat::roi(&state.cleaned_grayscale_mask, state.mask_roi)?;
+        let cleaned_grayscale_mask_cropped = Mat::roi(&state.cleaned_grayscale_mask, mask_roi)?;
         state.displayed_img.set_to(
             &Scalar::from((MAX_PIXEL_VALUE, 0, MAX_PIXEL_VALUE)),
             &cleaned_grayscale_mask_cropped,
         )?;
 
-        let eroded_grayscale_mask_cropped = Mat::roi(&state.eroded_grayscale_mask, state.mask_roi)?;
+        let eroded_grayscale_mask_cropped = Mat::roi(&state.eroded_grayscale_mask, mask_roi)?;
         state.displayed_img.set_to(
             &Scalar::from((MAX_PIXEL_VALUE * 3 / 4, 0, MAX_PIXEL_VALUE * 3 / 4)),
             &eroded_grayscale_mask_cropped,
@@ -491,6 +488,15 @@ fn toggle_dragging(state: &mut State) {
     }
 }
 
+fn toggle_cropping(state: &mut State) {
+    if state.selecting_crop {
+        state.selecting_crop = false;
+    } else if let Some((x, y)) = state.maybe_xy {
+        if let Some(crop) = state.maybe_crop {}
+        // state.maybe_crop = Some((x, y));
+        state.selecting_crop = true;
+    }
+}
 /// Displays a UI for assignment the stickers of a `PuzzleGeometry`
 ///
 /// # Errors
@@ -537,7 +543,6 @@ pub fn pixel_assignment_ui(
     let cleaned_grayscale_mask = grayscale_mask.clone();
     let eroded_grayscale_mask = grayscale_mask.clone();
     let tmp_mask = grayscale_mask.clone();
-    let mask_roi = Rect::new(1, 1, img.cols(), img.rows());
     let erosion_kernel = Mat::default();
     let erosion_kernel_times_two = Mat::default();
 
@@ -568,7 +573,6 @@ pub fn pixel_assignment_ui(
         erosion_kernel_times_two,
         gui_scale: 0.0,
         displayed_img,
-        mask_roi,
         pixel_assignment,
         stickers_to_assign,
         white_balances_to_assign,
@@ -579,6 +583,8 @@ pub fn pixel_assignment_ui(
         maybe_drag_xy: None,
         maybe_xy: None,
         dragging: false,
+        selecting_crop: false,
+        maybe_crop: None,
         ui: UIState::Assigning,
     }));
 
@@ -704,8 +710,8 @@ pub fn pixel_assignment_ui(
         update_display(&mut state)?;
     }
 
-    let mut in_toggle_dragging = false;
-    let mut in_cropping = false;
+    let mut holding_s = false;
+    let mut holding_c = false;
     loop {
         const C: i32 = 99;
         const D: i32 = 100;
@@ -752,31 +758,32 @@ pub fn pixel_assignment_ui(
             let mut state = state.lock().unwrap();
             match key {
                 C => {
-                    in_toggle_dragging = false;
-                    if !in_cropping {
-                        in_cropping = true;
+                    holding_s = false;
+                    if !holding_c {
+                        toggle_cropping(&mut state);
+                        holding_c = true;
                     }
                 }
                 D => {
-                    in_toggle_dragging = false;
-                    in_cropping = false;
+                    holding_s = false;
+                    holding_c = false;
                     submit_button_callback(&mut state)?;
                 }
                 R => {
-                    in_toggle_dragging = false;
-                    in_cropping = false;
+                    holding_s = false;
+                    holding_c = false;
                     restart_button_callback(&mut state)?;
                 }
                 S => {
-                    if !in_toggle_dragging {
+                    if !holding_s {
                         toggle_dragging(&mut state);
-                        in_toggle_dragging = true;
+                        holding_s = true;
                     }
-                    in_cropping = false;
+                    holding_c = false;
                 }
                 _ => {
-                    in_toggle_dragging = false;
-                    in_cropping = false;
+                    holding_s = false;
+                    holding_c = false;
                 }
             }
         }

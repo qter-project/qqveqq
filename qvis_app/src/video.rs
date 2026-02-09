@@ -41,6 +41,8 @@ impl OnceBarrier {
 async fn draw_video_on_canvas(
     canvas_ref: &web_sys::HtmlCanvasElement,
     video_ref: &web_sys::HtmlVideoElement,
+    video_enabled: Signal<bool>,
+    set_video_enabled: WriteSignal<bool>,
     playing_barrier: &OnceBarrier,
 ) -> web_sys::CanvasRenderingContext2d {
     let opts = js_sys::Object::new();
@@ -52,6 +54,9 @@ async fn draw_video_on_canvas(
         .unwrap()
         .dyn_into::<web_sys::CanvasRenderingContext2d>()
         .unwrap();
+    if !video_enabled.get() {
+        set_video_enabled.set(true);
+    }
     playing_barrier.wait().await;
     ctx.draw_image_with_html_video_element_and_dw_and_dh(
         video_ref,
@@ -67,9 +72,18 @@ async fn draw_video_on_canvas(
 pub(crate) async fn take_picture_command(
     video_ref: &web_sys::HtmlVideoElement,
     canvas_ref: &web_sys::HtmlCanvasElement,
+    video_enabled: Signal<bool>,
+    set_video_enabled: WriteSignal<bool>,
     playing_barrier: &OnceBarrier,
 ) -> Box<[(f64, f64, f64)]> {
-    let ctx = draw_video_on_canvas(canvas_ref, video_ref, playing_barrier).await;
+    let ctx = draw_video_on_canvas(
+        canvas_ref,
+        video_ref,
+        video_enabled,
+        set_video_enabled,
+        playing_barrier,
+    )
+    .await;
 
     let image_data = ctx
         .get_image_data(
@@ -99,9 +113,18 @@ pub(crate) async fn take_picture_command(
 pub(crate) async fn pixel_assignment_command(
     video_ref: &web_sys::HtmlVideoElement,
     canvas_ref: &web_sys::HtmlCanvasElement,
+    video_enabled: Signal<bool>,
+    set_video_enabled: WriteSignal<bool>,
     playing_barrier: &OnceBarrier,
-) -> Result<web_sys::Blob, JsValue> {
-    draw_video_on_canvas(canvas_ref, video_ref, playing_barrier).await;
+) -> web_sys::Blob {
+    draw_video_on_canvas(
+        canvas_ref,
+        video_ref,
+        video_enabled,
+        set_video_enabled,
+        playing_barrier,
+    )
+    .await;
 
     let promise = js_sys::Promise::new(&mut |resolve, reject| {
         let resolve = resolve.clone();
@@ -124,8 +147,8 @@ pub(crate) async fn pixel_assignment_command(
             .unwrap();
         closure.forget();
     });
-    let blob = JsFuture::from(promise).await?;
-    Ok(blob.dyn_into::<web_sys::Blob>().unwrap())
+    let blob = JsFuture::from(promise).await.unwrap();
+    blob.dyn_into::<web_sys::Blob>().unwrap()
 }
 
 async fn all_camera_devices() -> Result<Vec<SendWrapper<web_sys::MediaDeviceInfo>>, JsValue> {
@@ -220,10 +243,18 @@ pub fn Video(
             #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
             let height = (f64::from(WIDTH) * aspect).round() as u32;
 
-            canvas_ref.set_attribute("width", &WIDTH.to_string()).unwrap();
-            canvas_ref.set_attribute("height", &height.to_string()).unwrap();
-            video_ref.set_attribute("width", &WIDTH.to_string()).unwrap();
-            video_ref.set_attribute("height", &height.to_string()).unwrap();
+            canvas_ref
+                .set_attribute("width", &WIDTH.to_string())
+                .unwrap();
+            canvas_ref
+                .set_attribute("height", &height.to_string())
+                .unwrap();
+            video_ref
+                .set_attribute("width", &WIDTH.to_string())
+                .unwrap();
+            video_ref
+                .set_attribute("height", &height.to_string())
+                .unwrap();
         },
         UseEventListenerOptions::default().once(true),
     );
@@ -295,10 +326,7 @@ pub fn Video(
           muted=true
           class="flex-1 min-w-0 border-2 border-white"
         />
-        <canvas
-          node_ref=canvas_ref
-          class="flex-1 min-w-0 border-2 border-amber-300"
-        />
+        <canvas node_ref=canvas_ref class="flex-1 min-w-0 border-2 border-amber-300" />
       </div>
       // zoom
       // resolution (width)

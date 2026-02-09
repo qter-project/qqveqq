@@ -10,5 +10,4 @@ kiddo = { version = "5.2.4", features = ["serde"] }
 ndarray = "0.17.1"
 puzzle_theory = { git = "https://github.com/qter-project/puzzle-theory", features = [ "rand", "serde" ] }
 serde = { version = "1.0.228", default-features = false, features = ["derive", "rc"] }
-# puzzle_theory = { path = "../../puzzle-theory" }
 rand = "0.9.2"
