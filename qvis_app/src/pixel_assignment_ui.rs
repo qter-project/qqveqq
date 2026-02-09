@@ -22,8 +22,9 @@ const EROSION_SIZE_TRACKBAR_MINDEFMAX: [i32; 3] = [2, 4, 20];
 const UPPER_DIFF_TRACKBAR_NAME: &str = "Upper diff";
 const UPPER_DIFF_TRACKBAR_MINDEFMAX: [i32; 3] = [0, 2, 5];
 const GUI_SCALE_TRACKBAR_NAME: &str = "GUI Scale";
-const GUI_SCALE_TRACKBAR_MINDEFMAX: [i32; 3] = [0, 11, 20];
+const GUI_SCALE_TRACKBAR_MINDEFMAX: [i32; 3] = [6, 11, 18];
 const SUBMIT_BUTTON_NAME: &str = "Assign sticker";
+const RESTART_BUTTON_NAME: &str = "Restart";
 const EROSION_KERNEL_MORPH_SHAPE: i32 = MORPH_ELLIPSE;
 const DEF_ANCHOR: Point = Point::new(-1, -1);
 const XY_CIRCLE_RADIUS: i32 = 6;
@@ -84,6 +85,25 @@ fn perm6_from_number(mut n: u16) -> [i32; 6] {
     }
 
     result
+}
+
+#[allow(clippy::cast_sign_loss)]
+fn outer_index_to_inner_index(outer: &Mat, inner: &Rect, outer_index: usize) -> Option<usize> {
+    let outer_cols = outer.cols() as usize;
+    let inner_rows = inner.height as usize;
+    let inner_cols = inner.width as usize;
+
+    let outer_row = outer_index / outer_cols;
+    let outer_col = outer_index % outer_cols;
+    let inner_row = outer_row - inner.y as usize;
+    let inner_col = outer_col - inner.x as usize;
+
+    let ret = inner_row * inner_cols + inner_col;
+    if ret >= inner_cols * inner_rows {
+        None
+    } else {
+        Some(ret)
+    }
 }
 
 fn update_display(state: &mut State) -> opencv::Result<()> {
@@ -251,35 +271,22 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
             erosion_count += 1;
         };
 
-        // TODO: GET RID OF
-        let mask_to_randomly_sample =
-            Mat::roi(mask_to_randomly_sample, state.mask_roi)?.clone_pointee();
-
         let mut seed = [0; 32];
         seed[0..4].copy_from_slice(&drag_origin_x.to_be_bytes());
         seed[4..8].copy_from_slice(&drag_origin_y.to_be_bytes());
         let mut rng = SmallRng::from_seed(seed);
-        // let cols = mask_to_randomly_sample.cols() as usize;
         nonzeroes = mask_to_randomly_sample
             .data_bytes()?
             .iter()
             .copied()
-            // .skip(cols)
-            // .take(cols * (mask_to_randomly_sample.rows() as usize - 4))
             .enumerate()
-            // .filter_map(|(i, value)| {
-            //     let col = i % cols;
-            //     if col == 0 || col == 1 || col == cols - 1 || col == cols - 2 {
-            //         dbg!(i);
-            //         None
-            //     } else {
-            //         Some(value)
-            //     }
-            // })
-            // .enumerate()
             .filter_map(|(i, value)| {
                 if value == u8::try_from(MAX_PIXEL_VALUE).unwrap() {
-                    Some(i)
+                    outer_index_to_inner_index(
+                        mask_to_randomly_sample,
+                        &state.mask_roi,
+                        i,
+                    )
                 } else {
                     None
                 }
@@ -677,6 +684,19 @@ pub fn pixel_assignment_ui(
             })),
         )?;
     }
+    {
+        let state = Arc::clone(&state);
+        highgui::create_button_def(
+            RESTART_BUTTON_NAME,
+            Some(Box::new(move |_state| {
+                #[allow(clippy::missing_panics_doc)]
+                let mut state = state.lock().unwrap();
+                if let Err(e) = restart_button_callback(&mut state) {
+                    state.ui = UIState::OpenCVError(e);
+                }
+            })),
+        )?;
+    }
 
     {
         #[allow(clippy::missing_panics_doc)]
@@ -685,7 +705,9 @@ pub fn pixel_assignment_ui(
     }
 
     let mut in_toggle_dragging = false;
+    let mut in_cropping = false;
     loop {
+        const C: i32 = 99;
         const D: i32 = 100;
         const R: i32 = 114;
         const S: i32 = 115;
@@ -729,12 +751,20 @@ pub fn pixel_assignment_ui(
             #[allow(clippy::missing_panics_doc)]
             let mut state = state.lock().unwrap();
             match key {
+                C => {
+                    in_toggle_dragging = false;
+                    if !in_cropping {
+                        in_cropping = true;
+                    }
+                }
                 D => {
                     in_toggle_dragging = false;
+                    in_cropping = false;
                     submit_button_callback(&mut state)?;
                 }
                 R => {
                     in_toggle_dragging = false;
+                    in_cropping = false;
                     restart_button_callback(&mut state)?;
                 }
                 S => {
@@ -742,9 +772,11 @@ pub fn pixel_assignment_ui(
                         toggle_dragging(&mut state);
                         in_toggle_dragging = true;
                     }
+                    in_cropping = false;
                 }
                 _ => {
                     in_toggle_dragging = false;
+                    in_cropping = false;
                 }
             }
         }
