@@ -1,5 +1,8 @@
 use leptos::{ev::Targeted, html, prelude::*};
-use leptos_use::{UseEventListenerOptions, UseUserMediaReturn, use_event_listener_with_options};
+use leptos_use::{
+    UseEventListenerOptions, UseUserMediaReturn, use_event_listener,
+    use_event_listener_with_options,
+};
 use log::{info, warn};
 use qvis::Pixel;
 use send_wrapper::SendWrapper;
@@ -28,6 +31,10 @@ impl OnceBarrier {
     fn set_ready(&self) {
         self.ready.store(true, Ordering::Release);
         self.notify.notify_waiters();
+    }
+
+    fn set_unready(&self) {
+        self.ready.store(false, Ordering::Release);
     }
 
     async fn wait(&self) {
@@ -188,7 +195,6 @@ pub fn Video(
 ) -> impl IntoView {
     let UseUserMediaReturn {
         stream,
-        enabled,
         set_enabled,
         ..
     } = use_user_media_return;
@@ -209,6 +215,7 @@ pub fn Video(
             }
             Some(Err(e)) => {
                 warn!("Failed to get intialize video: {e:?}");
+                set_enabled.set(false);
                 None
             }
             None => {
@@ -218,15 +225,18 @@ pub fn Video(
         };
 
         video_ref.set_src_object(maybe_stream);
-        let new = maybe_stream.is_some();
-        let old = enabled.get_untracked();
-        if new != old {
-            set_enabled.set(new);
-        }
     });
 
+    let value = playing_barrier.clone();
     let toggle_enabled = move |_| {
-        set_enabled.update(|e| *e = !*e);
+        set_enabled.update(|e| {
+            if *e {
+                value.set_unready();
+                *e = false;
+            } else {
+                *e = true;
+            }
+        });
     };
 
     let _ = use_event_listener_with_options(
@@ -259,18 +269,13 @@ pub fn Video(
         UseEventListenerOptions::default().once(true),
     );
 
-    let _ = use_event_listener_with_options(
-        video_ref,
-        leptos::ev::playing,
-        move |_| {
-            let playing_barrier = Arc::clone(&playing_barrier);
-            spawn_local(async move {
-                gloo_timers::future::TimeoutFuture::new(500).await;
-                playing_barrier.set_ready();
-            });
-        },
-        UseEventListenerOptions::default().once(true),
-    );
+    let _ = use_event_listener(video_ref, leptos::ev::playing, move |_| {
+        let playing_barrier = Arc::clone(&playing_barrier);
+        spawn_local(async move {
+            gloo_timers::future::TimeoutFuture::new(500).await;
+            playing_barrier.set_ready();
+        });
+    });
 
     let camera_devices =
         LocalResource::new(move || async move { all_camera_devices().await.unwrap() });

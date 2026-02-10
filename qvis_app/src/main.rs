@@ -148,7 +148,7 @@ async fn robot_tui(server_signals: &mut WsSignals) {
                 .await
                 .unwrap();
         } else {
-            warn!("Unknown command: {}", line);
+            leptos::logging::log!("WARNING: Unknown command: {}", line);
         }
     }
 }
@@ -166,21 +166,20 @@ async fn take_picture(
     channel
         .on_server(move |message: &TakePictureMessage| {
             info!("Received message {message:#?}");
-            let response_tx = response_tx
-                .lock()
-                .unwrap()
-                .take()
-                .expect("Expected to send only one response");
-            match message {
-                TakePictureMessage::PermutationResult(permutation) => {
-                    response_tx.send(Some(permutation.clone())).unwrap();
+            if let Some(response_tx) = response_tx.lock().unwrap().take() {
+                match message {
+                    TakePictureMessage::PermutationResult(permutation) => {
+                        response_tx.send(Some(permutation.clone())).unwrap();
+                    }
+                    TakePictureMessage::Calibrated => {
+                        response_tx.send(None).unwrap();
+                    }
+                    m @ (TakePictureMessage::TakePicture | TakePictureMessage::Calibrate(_)) => {
+                        warn!("Received {m:?} on server, which should not happen");
+                    }
                 }
-                TakePictureMessage::Calibrated => {
-                    response_tx.send(None).unwrap();
-                }
-                m @ (TakePictureMessage::TakePicture | TakePictureMessage::Calibrate(_)) => {
-                    warn!("Received {m:?} on server, which should not happen");
-                }
+            } else {
+                warn!("Received message {message:#?} but response channel was already used. This task will likely hang now.");
             }
         })
         .map_err(ServerFnError::new)?;

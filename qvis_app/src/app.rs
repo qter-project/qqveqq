@@ -24,8 +24,6 @@ pub enum TakePictureMessage {
     TakePicture,
     Calibrate(Permutation),
     // Response
-    // TODO:
-    // QvisAppError,
     PermutationResult(Permutation),
     Calibrated,
 }
@@ -245,7 +243,7 @@ pub fn App() -> impl IntoView {
     );
 
     view! {
-      <header class="mb-5 font-sans text-4xl font-bold tracking-wider text-center bg-[rgb(47,48,80)] leading-20">
+      <header class="font-sans text-4xl font-bold tracking-wider text-center bg-[rgb(47,48,80)] leading-20">
         <button
           on:click=move |_| {
             location().reload().unwrap();
@@ -255,7 +253,7 @@ pub fn App() -> impl IntoView {
           "QVIS"
         </button>
       </header>
-      <main class="flex flex-col gap-4 justify-center mr-4 ml-4 text-center">
+      <main class="flex flex-col gap-4 justify-center ml-4 mr-4 mt-5 mb-6 text-center">
         <Video video_ref canvas_ref pixel_assignment_action do_pixel_assignment use_user_media_return playing_barrier />
         "Messages:"
         <div class="relative h-72 font-mono text-left border-2 border-gray-300">

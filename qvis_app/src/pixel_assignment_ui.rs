@@ -1,6 +1,5 @@
 use bytes::Bytes;
 use internment::ArcIntern;
-use log::info;
 use opencv::{
     core::{BORDER_CONSTANT, CV_8UC1, CV_8UC3, Point, Rect, Scalar, Size, Vec3b},
     highgui::{self, EVENT_LBUTTONUP},
@@ -25,11 +24,10 @@ const UPPER_DIFF_TRACKBAR_MINDEFMAX: [i32; 3] = [0, 2, 5];
 const GUI_SCALE_TRACKBAR_NAME: &str = "GUI Scale";
 const GUI_SCALE_TRACKBAR_MINDEFMAX: [i32; 3] = [6, 11, 18];
 const SUBMIT_BUTTON_NAME: &str = "Assign sticker";
-const RESTART_BUTTON_NAME: &str = "Restart";
+const BACK_BUTTON_NAME: &str = "Back";
 const EROSION_KERNEL_MORPH_SHAPE: i32 = MORPH_ELLIPSE;
 const DEF_ANCHOR: Point = Point::new(-1, -1);
 const RECTANGLE_DEF_SHIFT: i32 = 0;
-const XY_CIRCLE_RADIUS: i32 = 6;
 const MAX_PIXEL_VALUE: i32 = 255;
 const MAX_PIXEL_COUNT: i32 = 300_000 * 100;
 const ERODE_UNTIL_PERCENT: (i32, i32) = (1, 3);
@@ -61,6 +59,7 @@ struct State {
     erosion_kernel_times_two: Mat,
     displayed_img: Mat,
     pixel_assignment: Box<[Pixel]>,
+    pixel_assignment_mask: Mat,
     stickers_to_assign: Vec<(Face, Vec<ArcIntern<str>>)>,
     white_balances_to_assign: Vec<Face>,
     assigning_sticker_idx: usize,
@@ -73,6 +72,18 @@ struct State {
     dragging: bool,
     crop: CropState,
     ui: UIState,
+}
+
+impl State {
+    #[allow(clippy::cast_possible_truncation)]
+    fn xy_circle_radius(&self) -> i32 {
+        (5.0 * self.gui_scale).round() as i32
+    }
+
+    #[allow(clippy::cast_possible_truncation)]
+    fn xy_line_thickness(&self) -> i32 {
+        (3.0 * self.gui_scale).round() as i32
+    }
 }
 
 fn c(x: i32, n: i32) -> i32 {
@@ -128,7 +139,7 @@ fn inner_index_to_outer_index(outer: &Mat, inner: &Rect, inner_index: usize) -> 
     let inner_cols = inner.width as usize;
     let inner_rows = inner.height as usize;
 
-    if inner_index >= inner_cols.checked_mul(inner_rows)? {
+    if inner_index >= inner_cols * inner_rows {
         return None;
     }
 
@@ -143,12 +154,12 @@ fn inner_index_to_outer_index(outer: &Mat, inner: &Rect, inner_index: usize) -> 
     Some(outer_index)
 }
 
-fn update_display(state: &mut State) -> opencv::Result<()> {
+fn update_floodfill_display(state: &mut State) -> opencv::Result<()> {
     let maybe_cropped_img = match &mut state.crop {
         CropState::SelectedCrop(_) | CropState::SelectingCrop(_) | CropState::NoCrop => {
             &mut state.img
         }
-        CropState::Crop((_, mat)) => mat,
+        CropState::Crop((_, cropped_img)) => cropped_img,
     };
     let mask_roi = Rect::new(2, 2, maybe_cropped_img.cols(), maybe_cropped_img.rows());
     maybe_cropped_img.copy_to(&mut state.displayed_img)?;
@@ -272,7 +283,7 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
 
         let og_num_pixels = opencv::core::count_non_zero(&state.cleaned_grayscale_mask)?;
         let mut erosion_count = 0;
-        let mask_to_randomly_sample = loop {
+        loop {
             let has_eroded_enough = |to_check| -> Result<bool, opencv::Error> {
                 let current_num_pixels = opencv::core::count_non_zero(to_check)?;
                 Ok(current_num_pixels
@@ -284,11 +295,11 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
                     state
                         .cleaned_grayscale_mask
                         .copy_to(&mut state.eroded_grayscale_mask)?;
-                    break &state.cleaned_grayscale_mask;
+                    break;
                 }
                 &state.cleaned_grayscale_mask
             } else {
-                if has_eroded_enough(&state.eroded_grayscale_mask)? {
+                if has_eroded_enough(&state.eroded_grayscale_mask)? || erosion_count == 5 {
                     if erosion_count == 1 {
                         state
                             .cleaned_grayscale_mask
@@ -296,7 +307,7 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
                     } else {
                         std::mem::swap(&mut state.eroded_grayscale_mask, &mut state.tmp_mask);
                     }
-                    break &state.eroded_grayscale_mask;
+                    break;
                 }
                 &state.eroded_grayscale_mask
             };
@@ -313,20 +324,21 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
 
             std::mem::swap(&mut state.eroded_grayscale_mask, &mut state.tmp_mask);
             erosion_count += 1;
-        };
+        }
 
         let mut seed = [0; 32];
         seed[0..4].copy_from_slice(&drag_origin_x.to_be_bytes());
         seed[4..8].copy_from_slice(&drag_origin_y.to_be_bytes());
         let mut rng = SmallRng::from_seed(seed);
-        nonzeroes = mask_to_randomly_sample
+        nonzeroes = state
+            .eroded_grayscale_mask
             .data_bytes()?
             .iter()
             .copied()
             .enumerate()
             .filter_map(|(i, value)| {
                 if value == u8::try_from(MAX_PIXEL_VALUE).unwrap() {
-                    outer_index_to_inner_index(mask_to_randomly_sample, &mask_roi, i)
+                    outer_index_to_inner_index(&state.eroded_grayscale_mask, &mask_roi, i)
                 } else {
                     None
                 }
@@ -337,19 +349,21 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
             .0
             .to_vec();
 
+        let xy_line_thickness = state.xy_line_thickness();
         imgproc::line(
             &mut state.displayed_img,
             Point::new(drag_origin_x, drag_origin_y),
             Point::new(drag_x, drag_y),
             Scalar::all(f64::from(MAX_PIXEL_VALUE)),
-            3,
+            xy_line_thickness,
             LINE_8,
             0,
         )?;
+        let xy_circle_radius = state.xy_circle_radius();
         imgproc::circle(
             &mut state.displayed_img,
             Point::new(drag_x, drag_y),
-            XY_CIRCLE_RADIUS,
+            xy_circle_radius,
             Scalar::all(f64::from(MAX_PIXEL_VALUE)),
             FILLED,
             LINE_8,
@@ -358,7 +372,7 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
         imgproc::circle(
             &mut state.displayed_img,
             Point::new(drag_x, drag_y),
-            XY_CIRCLE_RADIUS - 3,
+            xy_circle_radius - 3,
             Scalar::from((0, 0, MAX_PIXEL_VALUE)),
             FILLED,
             LINE_8,
@@ -428,10 +442,16 @@ fn update_display(state: &mut State) -> opencv::Result<()> {
             ]);
         }
     } else {
-        // TODO pixel assignment debug
-        // TODO thread 'main' (60482462) panicked at qvis_app/src/main.rs:209:80:
-        // called `Result::unwrap()` on an `Err` value: Error { code: "StsOutOfRange, -211", message: "OpenCV error during pixel assignment: OpenCV(4.13.0) /Users/arhan/Desktop/opencv-4.13.0/modules/imgproc/src/floodfill.cpp:522: error: (-211:One of the arguments' values is out of range) Seed point is outside of image in function 'floodFill'\n" }
-        // stack backtrace:
+        let pixel_assignment_mask_cropped = match state.crop {
+            CropState::NoCrop | CropState::SelectedCrop(_) | CropState::SelectingCrop(_) => {
+                Mat::copy(&state.pixel_assignment_mask)?
+            }
+            CropState::Crop((rect, _)) => Mat::roi(&state.pixel_assignment_mask, rect)?,
+        };
+        state.displayed_img.set_to(
+            &Scalar::from((MAX_PIXEL_VALUE, 0, MAX_PIXEL_VALUE)),
+            &pixel_assignment_mask_cropped,
+        )?;
     }
     highgui::imshow(WINDOW_NAME, &state.displayed_img)?;
     Ok(())
@@ -444,7 +464,7 @@ fn mouse_callback(state: &mut State, event: i32, x: i32, y: i32) -> opencv::Resu
             state.img.copy_to(&mut state.displayed_img)?;
             match x.cmp(&rect.x) {
                 Ordering::Less => {
-                    rect.width += rect.x - x;
+                    rect.width -= x - rect.x;
                     rect.x = x;
                 }
                 Ordering::Greater => {
@@ -456,7 +476,7 @@ fn mouse_callback(state: &mut State, event: i32, x: i32, y: i32) -> opencv::Resu
             }
             match y.cmp(&rect.y) {
                 Ordering::Less => {
-                    rect.height += rect.y - y;
+                    rect.height -= y - rect.y;
                     rect.y = y;
                 }
                 Ordering::Greater => {
@@ -475,9 +495,20 @@ fn mouse_callback(state: &mut State, event: i32, x: i32, y: i32) -> opencv::Resu
                 RECTANGLE_DEF_SHIFT,
             )?;
             highgui::imshow(WINDOW_NAME, &state.displayed_img)?;
+        } else if let CropState::SelectedCrop(rect) = &state.crop {
+            state.img.copy_to(&mut state.displayed_img)?;
+            imgproc::rectangle(
+                &mut state.displayed_img,
+                *rect,
+                Scalar::from((MAX_PIXEL_VALUE, MAX_PIXEL_VALUE, 0)),
+                2,
+                LINE_8,
+                RECTANGLE_DEF_SHIFT,
+            )?;
+            highgui::imshow(WINDOW_NAME, &state.displayed_img)?;
         } else if state.dragging {
             state.maybe_drag_xy = Some((x, y));
-            update_display(state)?;
+            update_floodfill_display(state)?;
         }
     } else if event == EVENT_LBUTTONUP {
         match state.crop {
@@ -493,20 +524,44 @@ fn mouse_callback(state: &mut State, event: i32, x: i32, y: i32) -> opencv::Resu
                 state.eroded_grayscale_mask = state.grayscale_mask.clone();
                 state.tmp_mask = state.grayscale_mask.clone();
                 if let Some(drag_origin_mut) = state.maybe_drag_origin.as_mut() {
-                    drag_origin_mut.0 -= rect.x;
-                    drag_origin_mut.1 -= rect.y;
+                    if drag_origin_mut.0 >= rect.x
+                        && drag_origin_mut.0 < rect.x + rect.width
+                        && drag_origin_mut.1 >= rect.y
+                        && drag_origin_mut.1 < rect.y + rect.height
+                    {
+                        drag_origin_mut.0 -= rect.x;
+                        drag_origin_mut.1 -= rect.y;
+                    } else {
+                        state.maybe_drag_origin = None;
+                    }
                 }
                 if let Some(drag_xy_mut) = state.maybe_drag_xy.as_mut() {
-                    drag_xy_mut.0 -= rect.x;
-                    drag_xy_mut.1 -= rect.y;
+                    if drag_xy_mut.0 >= rect.x
+                        && drag_xy_mut.0 < rect.x + rect.width
+                        && drag_xy_mut.1 >= rect.y
+                        && drag_xy_mut.1 < rect.y + rect.height
+                    {
+                        drag_xy_mut.0 -= rect.x;
+                        drag_xy_mut.1 -= rect.y;
+                    } else {
+                        state.maybe_drag_xy = None;
+                    }
                 }
                 if let Some(xy_mut) = state.maybe_xy.as_mut() {
-                    xy_mut.0 -= rect.x;
-                    xy_mut.1 -= rect.y;
+                    if xy_mut.0 >= rect.x
+                        && xy_mut.0 < rect.x + rect.width
+                        && xy_mut.1 >= rect.y
+                        && xy_mut.1 < rect.y + rect.height
+                    {
+                        xy_mut.0 -= rect.x;
+                        xy_mut.1 -= rect.y;
+                    } else {
+                        state.maybe_xy = None;
+                    }
                 }
 
                 state.crop = CropState::Crop((rect, cropped_image));
-                update_display(state)?;
+                update_floodfill_display(state)?;
             }
             CropState::Crop((rect, _)) => {
                 state.displayed_img =
@@ -517,20 +572,44 @@ fn mouse_callback(state: &mut State, event: i32, x: i32, y: i32) -> opencv::Resu
                 state.eroded_grayscale_mask = state.grayscale_mask.clone();
                 state.tmp_mask = state.grayscale_mask.clone();
                 if let Some(drag_origin_mut) = state.maybe_drag_origin.as_mut() {
-                    drag_origin_mut.0 += rect.x;
-                    drag_origin_mut.1 += rect.y;
+                    if drag_origin_mut.0 >= 0
+                        && drag_origin_mut.0 < rect.width
+                        && drag_origin_mut.1 >= 0
+                        && drag_origin_mut.1 < rect.height
+                    {
+                        drag_origin_mut.0 += rect.x;
+                        drag_origin_mut.1 += rect.y;
+                    } else {
+                        state.maybe_drag_origin = None;
+                    }
                 }
                 if let Some(drag_xy_mut) = state.maybe_drag_xy.as_mut() {
-                    drag_xy_mut.0 += rect.x;
-                    drag_xy_mut.1 += rect.y;
+                    if drag_xy_mut.0 >= 0
+                        && drag_xy_mut.0 < rect.width
+                        && drag_xy_mut.1 >= 0
+                        && drag_xy_mut.1 < rect.height
+                    {
+                        drag_xy_mut.0 += rect.x;
+                        drag_xy_mut.1 += rect.y;
+                    } else {
+                        state.maybe_drag_xy = None;
+                    }
                 }
                 if let Some(xy_mut) = state.maybe_xy.as_mut() {
-                    xy_mut.0 += rect.x;
-                    xy_mut.1 += rect.y;
+                    if xy_mut.0 >= 0
+                        && xy_mut.0 < rect.width
+                        && xy_mut.1 >= 0
+                        && xy_mut.1 < rect.height
+                    {
+                        xy_mut.0 += rect.x;
+                        xy_mut.1 += rect.y;
+                    } else {
+                        state.maybe_xy = None;
+                    }
                 }
 
                 state.crop = CropState::NoCrop;
-                update_display(state)?;
+                update_floodfill_display(state)?;
             }
         }
     }
@@ -545,18 +624,20 @@ fn erosion_kernel_trackbar_callback(state: &mut State, pos: i32) -> opencv::Resu
         EROSION_KERNEL_MORPH_SHAPE,
         Size::new(pos * 2, pos * 2),
     )?;
-    update_display(state)?;
+    update_floodfill_display(state)?;
     Ok(())
 }
 
 fn light_tolerance_trackbar_callback(state: &mut State, pos: i32) -> opencv::Result<()> {
     state.upper_flood_fill_diff = pos;
-    update_display(state)?;
+    update_floodfill_display(state)?;
     Ok(())
 }
 
-fn gui_scale_trackbar_callback(state: &mut State, pos: i32) {
+fn gui_scale_trackbar_callback(state: &mut State, pos: i32) -> opencv::Result<()> {
     state.gui_scale = f64::from(pos) / 10.0;
+    update_floodfill_display(state)?;
+    Ok(())
 }
 
 fn submit_button_callback(state: &mut State) -> opencv::Result<()> {
@@ -566,16 +647,21 @@ fn submit_button_callback(state: &mut State) -> opencv::Result<()> {
             i = inner_index_to_outer_index(&state.img, rect, i).unwrap();
         }
         count += 1;
-        state.pixel_assignment[i] =
-            if state.assigning_sticker_idx == state.stickers_to_assign.len() {
-                let face = &state.white_balances_to_assign[state.assigning_white_balance_idx];
-                Pixel::WhiteBalance(face.color.clone())
-            } else {
-                Pixel::Sticker(state.assigning_sticker_idx)
-            };
+        state.pixel_assignment[i] = if state.assigning_sticker_idx == state.stickers_to_assign.len()
+        {
+            let face = &state.white_balances_to_assign[state.assigning_white_balance_idx];
+            Pixel::WhiteBalance(face.color.clone())
+        } else {
+            Pixel::Sticker(state.assigning_sticker_idx)
+        };
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let row = i as i32 / state.img.cols();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let col = i as i32 % state.img.cols();
+        *state.pixel_assignment_mask.at_2d_mut::<u8>(row, col)? = 255;
     }
 
-    info!("Assigned {count} pixels",);
+    leptos::logging::log!("Assigned {count} pixels");
 
     if state.assigning_sticker_idx == state.stickers_to_assign.len() {
         state.assigning_white_balance_idx += 1;
@@ -587,17 +673,45 @@ fn submit_button_callback(state: &mut State) -> opencv::Result<()> {
         state.assigning_sticker_idx += 1;
     }
     state.maybe_drag_origin = None;
-    update_display(state)?;
+    update_floodfill_display(state)?;
 
     Ok(())
 }
 
-fn restart_button_callback(state: &mut State) -> opencv::Result<()> {
-    state.assigning_sticker_idx = 0;
-    state.assigning_white_balance_idx = 0;
-    state.pixel_assignment.fill(Pixel::Unassigned);
+fn back_button_callback(state: &mut State) -> opencv::Result<()> {
+    if state.assigning_white_balance_idx != 0 {
+        state.assigning_white_balance_idx -= 1;
+    } else if state.assigning_sticker_idx != 0 {
+        state.assigning_sticker_idx -= 1;
+    } else {
+        return Ok(());
+    }
+
+    let mut count = 0;
+    for i in 0..state.pixel_assignment.len() {
+        count += 1;
+
+        if state.assigning_sticker_idx == state.stickers_to_assign.len() {
+            let face = &state.white_balances_to_assign[state.assigning_white_balance_idx];
+            if matches!(&state.pixel_assignment[i], Pixel::WhiteBalance(c) if c == &face.color) {
+                state.pixel_assignment[i] = Pixel::Unassigned;
+            }
+        } else if matches!(state.pixel_assignment[i], Pixel::Sticker(j) if j == state.assigning_sticker_idx)
+        {
+            state.pixel_assignment[i] = Pixel::Unassigned;
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let row = i as i32 / state.img.cols();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
+        let col = i as i32 % state.img.cols();
+        *state.pixel_assignment_mask.at_2d_mut::<u8>(row, col)? = 0;
+    }
+
+    leptos::logging::log!("Went back {count} pixels");
+
     state.maybe_drag_origin = None;
-    update_display(state)?;
+    update_floodfill_display(state)?;
+
     Ok(())
 }
 
@@ -607,7 +721,7 @@ fn toggle_dragging(state: &mut State) {
     } else if let Some((x, y)) = state.maybe_xy {
         if let Some((drag_x, drag_y)) = state.maybe_drag_xy {
             let distance = f64::from(drag_x - x).hypot(f64::from(drag_y - y));
-            if distance > f64::from(XY_CIRCLE_RADIUS) {
+            if distance > f64::from(state.xy_circle_radius()) {
                 state.maybe_drag_origin = Some((x, y));
             }
         } else {
@@ -689,6 +803,7 @@ pub fn pixel_assignment_ui(
         ))?
     ]
     .into_boxed_slice();
+    let pixel_assignment_mask_cropped = Mat::zeros(img.rows(), img.cols(), CV_8UC1)?.to_mat()?;
 
     let stickers_to_assign = puzzle_geometry.non_fixed_stickers().to_vec();
     let mut white_balances_to_assign: Vec<_> = stickers_to_assign
@@ -709,6 +824,7 @@ pub fn pixel_assignment_ui(
         gui_scale: 0.0,
         displayed_img,
         pixel_assignment,
+        pixel_assignment_mask: pixel_assignment_mask_cropped,
         stickers_to_assign,
         white_balances_to_assign,
         assigning_white_balance_idx: 0,
@@ -797,7 +913,9 @@ pub fn pixel_assignment_ui(
             Some(Box::new(move |pos| {
                 #[allow(clippy::missing_panics_doc)]
                 let mut state = state.lock().unwrap();
-                gui_scale_trackbar_callback(&mut state, pos);
+                if let Err(e) = gui_scale_trackbar_callback(&mut state, pos) {
+                    state.ui = UIState::OpenCVError(e);
+                }
             })),
         )?;
         highgui::set_trackbar_pos(
@@ -827,11 +945,11 @@ pub fn pixel_assignment_ui(
     {
         let state = Arc::clone(&state);
         highgui::create_button_def(
-            RESTART_BUTTON_NAME,
+            BACK_BUTTON_NAME,
             Some(Box::new(move |_state| {
                 #[allow(clippy::missing_panics_doc)]
                 let mut state = state.lock().unwrap();
-                if let Err(e) = restart_button_callback(&mut state) {
+                if let Err(e) = back_button_callback(&mut state) {
                     state.ui = UIState::OpenCVError(e);
                 }
             })),
@@ -841,15 +959,15 @@ pub fn pixel_assignment_ui(
     {
         #[allow(clippy::missing_panics_doc)]
         let mut state = state.lock().unwrap();
-        update_display(&mut state)?;
+        update_floodfill_display(&mut state)?;
     }
 
     let mut holding_s = false;
     let mut holding_c = false;
     loop {
+        const B: i32 = 98;
         const C: i32 = 99;
-        const D: i32 = 100;
-        const R: i32 = 114;
+        const N: i32 = 110;
         const S: i32 = 115;
 
         {
@@ -862,7 +980,7 @@ pub fn pixel_assignment_ui(
             }
             match &state.ui {
                 UIState::Finished => {
-                    info!("Finished pixel assignment UI");
+                    leptos::logging::log!("Finished pixel assignment UI");
                     break Ok(state.pixel_assignment.clone());
                 }
                 UIState::OpenCVError(e) => {
@@ -898,15 +1016,15 @@ pub fn pixel_assignment_ui(
                         holding_c = true;
                     }
                 }
-                D => {
+                N => {
                     holding_s = false;
                     holding_c = false;
                     submit_button_callback(&mut state)?;
                 }
-                R => {
+                B => {
                     holding_s = false;
                     holding_c = false;
-                    restart_button_callback(&mut state)?;
+                    back_button_callback(&mut state)?;
                 }
                 S => {
                     if !holding_s {
