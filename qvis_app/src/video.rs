@@ -272,7 +272,7 @@ pub fn Video(
     let _ = use_event_listener(video_ref, leptos::ev::playing, move |_| {
         let playing_barrier = Arc::clone(&playing_barrier);
         spawn_local(async move {
-            gloo_timers::future::TimeoutFuture::new(500).await;
+            gloo_timers::future::TimeoutFuture::new(1000).await;
             playing_barrier.set_ready();
         });
     });

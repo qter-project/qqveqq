@@ -130,6 +130,10 @@ fn outer_index_to_inner_index(outer: &Mat, inner: &Rect, outer_index: usize) -> 
     Some(ret)
 }
 
+fn d(m: &Mat) {
+    leptos::logging::log!("{}", opencv::core::count_non_zero(m).unwrap());
+}
+
 #[allow(clippy::cast_sign_loss)]
 fn inner_index_to_outer_index(outer: &Mat, inner: &Rect, inner_index: usize) -> Option<usize> {
     let outer_rows = outer.rows() as usize;
@@ -161,7 +165,7 @@ fn update_floodfill_display(state: &mut State) -> opencv::Result<()> {
         }
         CropState::Crop((_, cropped_img)) => cropped_img,
     };
-    let mask_roi = Rect::new(2, 2, maybe_cropped_img.cols(), maybe_cropped_img.rows());
+    let mask_roi = Rect::new(1, 1, maybe_cropped_img.cols(), maybe_cropped_img.rows());
     maybe_cropped_img.copy_to(&mut state.displayed_img)?;
     let ran;
     let mut nonzeroes: Vec<usize>;
@@ -230,7 +234,7 @@ fn update_floodfill_display(state: &mut State) -> opencv::Result<()> {
         if opencv::core::has_non_zero(&Mat::roi(&state.cleaned_grayscale_mask, mask_roi)?)? {
             *state
                 .cleaned_grayscale_mask
-                .at_2d_mut::<u8>(drag_origin_y + 2, drag_origin_x + 2)? =
+                .at_2d_mut::<u8>(drag_origin_y + 1, drag_origin_x + 1)? =
                 MAX_PIXEL_VALUE.try_into().unwrap();
 
             Mat::roi_mut(&mut state.tmp_mask, mask_roi)?.set_to_def(&Scalar::all(0.0))?;
@@ -248,23 +252,31 @@ fn update_floodfill_display(state: &mut State) -> opencv::Result<()> {
             )?;
             std::mem::swap(&mut state.cleaned_grayscale_mask, &mut state.tmp_mask);
 
-            let rows = state.cleaned_grayscale_mask.rows();
-            let cols = state.cleaned_grayscale_mask.cols();
             state
                 .cleaned_grayscale_mask
-                .roi_mut(Rect::new(0, 0, cols, 2))?
+                .roi_mut(Rect::new(0, 0, state.cleaned_grayscale_mask.cols(), 1))?
                 .set_to_def(&Scalar::all(0.0))?;
             state
                 .cleaned_grayscale_mask
-                .roi_mut(Rect::new(0, rows - 2, cols, 2))?
+                .roi_mut(Rect::new(
+                    0,
+                    state.cleaned_grayscale_mask.rows() - 1,
+                    state.cleaned_grayscale_mask.cols(),
+                    1,
+                ))?
                 .set_to_def(&Scalar::all(0.0))?;
             state
                 .cleaned_grayscale_mask
-                .roi_mut(Rect::new(0, 2, 2, rows - 4))?
+                .roi_mut(Rect::new(0, 1, 1, state.cleaned_grayscale_mask.rows() - 2))?
                 .set_to_def(&Scalar::all(0.0))?;
             state
                 .cleaned_grayscale_mask
-                .roi_mut(Rect::new(cols - 2, 2, 2, rows - 4))?
+                .roi_mut(Rect::new(
+                    state.cleaned_grayscale_mask.cols() - 1,
+                    1,
+                    1,
+                    state.cleaned_grayscale_mask.rows() - 2,
+                ))?
                 .set_to_def(&Scalar::all(0.0))?;
             // For some reason dilation doesn't work on ROIs
             imgproc::dilate(
