@@ -336,6 +336,19 @@ pub fn Video(
       // zoom
       // resolution (width)
       // camera device
+      <div class="flex h-12">
+        <button on:click=move |_| do_pixel_assignment() class="flex-1 border-2 border-white cursor-pointer">
+          {move || {
+            if pixel_assignment_action.pending().get() {
+              "Processing...".to_string()
+            } else {
+              "Pixel assignment".to_string()
+            }
+          }}
+        </button>
+        <button class="flex-1 border-2 border-white cursor-pointer">"Export CVProcessor"</button>
+        <button class="flex-1 border-2 border-white cursor-pointer">"Import CVProcessor"</button>
+      </div>
       <select
         on:change:target=select_camera_device
         prop:value=move || camera_device.get().flatten().map(|d| d.device_id()).unwrap_or_default()
@@ -366,14 +379,5 @@ pub fn Video(
           })}
         </Suspense>
       </select>
-      <button on:click=move |_| do_pixel_assignment() class="inline cursor-pointer">
-        {move || {
-          if pixel_assignment_action.pending().get() {
-            "Processing...".to_string()
-          } else {
-            "Pixel assignment".to_string()
-          }
-        }}
-      </button>
     }
 }

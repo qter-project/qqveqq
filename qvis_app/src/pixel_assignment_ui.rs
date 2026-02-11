@@ -29,7 +29,6 @@ const EROSION_KERNEL_MORPH_SHAPE: i32 = MORPH_ELLIPSE;
 const DEF_ANCHOR: Point = Point::new(-1, -1);
 const RECTANGLE_DEF_SHIFT: i32 = 0;
 const MAX_PIXEL_VALUE: i32 = 255;
-const MAX_PIXEL_COUNT: i32 = 300_000 * 100;
 const ERODE_UNTIL_PERCENT: (i32, i32) = (1, 3);
 const MIN_SAMPLES: i32 = 30;
 const NUM_QVIS_PIXELS: usize = 20;
@@ -130,10 +129,6 @@ fn outer_index_to_inner_index(outer: &Mat, inner: &Rect, outer_index: usize) -> 
     Some(ret)
 }
 
-fn d(m: &Mat) {
-    leptos::logging::log!("{}", opencv::core::count_non_zero(m).unwrap());
-}
-
 #[allow(clippy::cast_sign_loss)]
 fn inner_index_to_outer_index(outer: &Mat, inner: &Rect, inner_index: usize) -> Option<usize> {
     let outer_rows = outer.rows() as usize;
@@ -177,7 +172,7 @@ fn update_floodfill_display(state: &mut State) -> opencv::Result<()> {
         let distance = (f64::from(drag_x - drag_origin_x)
             .hypot(f64::from(drag_y - drag_origin_y))
             .powf(1.5)
-            / 20.0) as i32;
+            / 15.0) as i32;
         // angle is between [-pi, pi]; add pi and multiply by 360/pi to get a range
         // of [0, 720] throughout the full circle which is 6!
         //
@@ -523,107 +518,6 @@ fn mouse_callback(state: &mut State, event: i32, x: i32, y: i32) -> opencv::Resu
             update_floodfill_display(state)?;
         }
     } else if event == EVENT_LBUTTONUP {
-        match state.crop {
-            CropState::NoCrop | CropState::SelectingCrop(_) => {}
-            CropState::SelectedCrop(rect) => {
-                let cropped_image = Mat::roi(&state.img, rect)?.clone_pointee();
-                state.displayed_img =
-                    Mat::zeros(cropped_image.rows(), cropped_image.cols(), CV_8UC3)?.to_mat()?;
-                state.grayscale_mask =
-                    Mat::zeros(cropped_image.rows() + 2, cropped_image.cols() + 2, CV_8UC1)?
-                        .to_mat()?;
-                state.cleaned_grayscale_mask = state.grayscale_mask.clone();
-                state.eroded_grayscale_mask = state.grayscale_mask.clone();
-                state.tmp_mask = state.grayscale_mask.clone();
-                if let Some(drag_origin_mut) = state.maybe_drag_origin.as_mut() {
-                    if drag_origin_mut.0 >= rect.x
-                        && drag_origin_mut.0 < rect.x + rect.width
-                        && drag_origin_mut.1 >= rect.y
-                        && drag_origin_mut.1 < rect.y + rect.height
-                    {
-                        drag_origin_mut.0 -= rect.x;
-                        drag_origin_mut.1 -= rect.y;
-                    } else {
-                        state.maybe_drag_origin = None;
-                    }
-                }
-                if let Some(drag_xy_mut) = state.maybe_drag_xy.as_mut() {
-                    if drag_xy_mut.0 >= rect.x
-                        && drag_xy_mut.0 < rect.x + rect.width
-                        && drag_xy_mut.1 >= rect.y
-                        && drag_xy_mut.1 < rect.y + rect.height
-                    {
-                        drag_xy_mut.0 -= rect.x;
-                        drag_xy_mut.1 -= rect.y;
-                    } else {
-                        state.maybe_drag_xy = None;
-                    }
-                }
-                if let Some(xy_mut) = state.maybe_xy.as_mut() {
-                    if xy_mut.0 >= rect.x
-                        && xy_mut.0 < rect.x + rect.width
-                        && xy_mut.1 >= rect.y
-                        && xy_mut.1 < rect.y + rect.height
-                    {
-                        xy_mut.0 -= rect.x;
-                        xy_mut.1 -= rect.y;
-                    } else {
-                        state.maybe_xy = None;
-                    }
-                }
-
-                state.crop = CropState::Crop((rect, cropped_image));
-                update_floodfill_display(state)?;
-            }
-            CropState::Crop((rect, _)) => {
-                state.displayed_img =
-                    Mat::zeros(state.img.rows(), state.img.cols(), CV_8UC3)?.to_mat()?;
-                state.grayscale_mask =
-                    Mat::zeros(state.img.rows() + 2, state.img.cols() + 2, CV_8UC1)?.to_mat()?;
-                state.cleaned_grayscale_mask = state.grayscale_mask.clone();
-                state.eroded_grayscale_mask = state.grayscale_mask.clone();
-                state.tmp_mask = state.grayscale_mask.clone();
-                if let Some(drag_origin_mut) = state.maybe_drag_origin.as_mut() {
-                    if drag_origin_mut.0 >= 0
-                        && drag_origin_mut.0 < rect.width
-                        && drag_origin_mut.1 >= 0
-                        && drag_origin_mut.1 < rect.height
-                    {
-                        drag_origin_mut.0 += rect.x;
-                        drag_origin_mut.1 += rect.y;
-                    } else {
-                        state.maybe_drag_origin = None;
-                    }
-                }
-                if let Some(drag_xy_mut) = state.maybe_drag_xy.as_mut() {
-                    if drag_xy_mut.0 >= 0
-                        && drag_xy_mut.0 < rect.width
-                        && drag_xy_mut.1 >= 0
-                        && drag_xy_mut.1 < rect.height
-                    {
-                        drag_xy_mut.0 += rect.x;
-                        drag_xy_mut.1 += rect.y;
-                    } else {
-                        state.maybe_drag_xy = None;
-                    }
-                }
-                if let Some(xy_mut) = state.maybe_xy.as_mut() {
-                    if xy_mut.0 >= 0
-                        && xy_mut.0 < rect.width
-                        && xy_mut.1 >= 0
-                        && xy_mut.1 < rect.height
-                    {
-                        xy_mut.0 += rect.x;
-                        xy_mut.1 += rect.y;
-                    } else {
-                        state.maybe_xy = None;
-                    }
-                }
-
-                state.crop = CropState::NoCrop;
-                update_floodfill_display(state)?;
-            }
-        }
     }
 
     Ok(())
@@ -701,22 +595,23 @@ fn back_button_callback(state: &mut State) -> opencv::Result<()> {
 
     let mut count = 0;
     for i in 0..state.pixel_assignment.len() {
-        count += 1;
-
-        if state.assigning_sticker_idx == state.stickers_to_assign.len() {
-            let face = &state.white_balances_to_assign[state.assigning_white_balance_idx];
-            if matches!(&state.pixel_assignment[i], Pixel::WhiteBalance(c) if c == &face.color) {
-                state.pixel_assignment[i] = Pixel::Unassigned;
-            }
-        } else if matches!(state.pixel_assignment[i], Pixel::Sticker(j) if j == state.assigning_sticker_idx)
-        {
-            state.pixel_assignment[i] = Pixel::Unassigned;
-        }
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let row = i as i32 / state.img.cols();
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         let col = i as i32 % state.img.cols();
-        *state.pixel_assignment_mask.at_2d_mut::<u8>(row, col)? = 0;
+        if state.assigning_sticker_idx == state.stickers_to_assign.len() {
+            let face = &state.white_balances_to_assign[state.assigning_white_balance_idx];
+            if matches!(&state.pixel_assignment[i], Pixel::WhiteBalance(c) if c == &face.color) {
+                count += 1;
+                state.pixel_assignment[i] = Pixel::Unassigned;
+                *state.pixel_assignment_mask.at_2d_mut::<u8>(row, col)? = 0;
+            }
+        } else if matches!(state.pixel_assignment[i], Pixel::Sticker(j) if j == state.assigning_sticker_idx)
+        {
+            count += 1;
+            state.pixel_assignment[i] = Pixel::Unassigned;
+            *state.pixel_assignment_mask.at_2d_mut::<u8>(row, col)? = 0;
+        }
     }
 
     leptos::logging::log!("Went back {count} pixels");
@@ -744,18 +639,117 @@ fn toggle_dragging(state: &mut State) {
     }
 }
 
-fn toggle_selecting_crop(state: &mut State) {
-    if let Some((x, y)) = state.maybe_xy {
-        match state.crop {
-            CropState::NoCrop | CropState::SelectedCrop(_) => {
+fn crop_action(state: &mut State) -> opencv::Result<()> {
+    match state.crop {
+        CropState::NoCrop => {
+            if let Some((x, y)) = state.maybe_xy {
                 state.crop = CropState::SelectingCrop(Rect::new(x, y, 0, 0));
-            }
-            CropState::Crop(_) => {}
-            CropState::SelectingCrop(rect) => {
-                state.crop = CropState::SelectedCrop(rect);
+            } else {
+                return Ok(());
             }
         }
+        CropState::SelectingCrop(rect) => {
+            state.crop = CropState::SelectedCrop(rect);
+        }
+        CropState::SelectedCrop(rect) => {
+            let cropped_image = Mat::roi(&state.img, rect)?;
+            if cropped_image.rows() < 3 || cropped_image.cols() < 3 {
+                return Ok(());
+            }
+            let cropped_image = cropped_image.clone_pointee();
+            state.displayed_img =
+                Mat::zeros(cropped_image.rows(), cropped_image.cols(), CV_8UC3)?.to_mat()?;
+            state.grayscale_mask =
+                Mat::zeros(cropped_image.rows() + 2, cropped_image.cols() + 2, CV_8UC1)?
+                    .to_mat()?;
+            state.cleaned_grayscale_mask = state.grayscale_mask.clone();
+            state.eroded_grayscale_mask = state.grayscale_mask.clone();
+            state.tmp_mask = state.grayscale_mask.clone();
+            if let Some(drag_origin_mut) = state.maybe_drag_origin.as_mut() {
+                if drag_origin_mut.0 >= rect.x
+                    && drag_origin_mut.0 < rect.x + rect.width
+                    && drag_origin_mut.1 >= rect.y
+                    && drag_origin_mut.1 < rect.y + rect.height
+                {
+                    drag_origin_mut.0 -= rect.x;
+                    drag_origin_mut.1 -= rect.y;
+                } else {
+                    state.maybe_drag_origin = None;
+                }
+            }
+            if let Some(drag_xy_mut) = state.maybe_drag_xy.as_mut() {
+                if drag_xy_mut.0 >= rect.x
+                    && drag_xy_mut.0 < rect.x + rect.width
+                    && drag_xy_mut.1 >= rect.y
+                    && drag_xy_mut.1 < rect.y + rect.height
+                {
+                    drag_xy_mut.0 -= rect.x;
+                    drag_xy_mut.1 -= rect.y;
+                } else {
+                    state.maybe_drag_xy = None;
+                }
+            }
+            if let Some(xy_mut) = state.maybe_xy.as_mut() {
+                if xy_mut.0 >= rect.x
+                    && xy_mut.0 < rect.x + rect.width
+                    && xy_mut.1 >= rect.y
+                    && xy_mut.1 < rect.y + rect.height
+                {
+                    xy_mut.0 -= rect.x;
+                    xy_mut.1 -= rect.y;
+                } else {
+                    state.maybe_xy = None;
+                }
+            }
+
+            state.crop = CropState::Crop((rect, cropped_image));
+        }
+        CropState::Crop((rect, _)) => {
+            state.displayed_img =
+                Mat::zeros(state.img.rows(), state.img.cols(), CV_8UC3)?.to_mat()?;
+            state.grayscale_mask =
+                Mat::zeros(state.img.rows() + 2, state.img.cols() + 2, CV_8UC1)?.to_mat()?;
+            state.cleaned_grayscale_mask = state.grayscale_mask.clone();
+            state.eroded_grayscale_mask = state.grayscale_mask.clone();
+            state.tmp_mask = state.grayscale_mask.clone();
+            if let Some(drag_origin_mut) = state.maybe_drag_origin.as_mut() {
+                if drag_origin_mut.0 >= 0
+                    && drag_origin_mut.0 < rect.width
+                    && drag_origin_mut.1 >= 0
+                    && drag_origin_mut.1 < rect.height
+                {
+                    drag_origin_mut.0 += rect.x;
+                    drag_origin_mut.1 += rect.y;
+                } else {
+                    state.maybe_drag_origin = None;
+                }
+            }
+            if let Some(drag_xy_mut) = state.maybe_drag_xy.as_mut() {
+                if drag_xy_mut.0 >= 0
+                    && drag_xy_mut.0 < rect.width
+                    && drag_xy_mut.1 >= 0
+                    && drag_xy_mut.1 < rect.height
+                {
+                    drag_xy_mut.0 += rect.x;
+                    drag_xy_mut.1 += rect.y;
+                } else {
+                    state.maybe_drag_xy = None;
+                }
+            }
+            if let Some(xy_mut) = state.maybe_xy.as_mut() {
+                if xy_mut.0 >= 0 && xy_mut.0 < rect.width && xy_mut.1 >= 0 && xy_mut.1 < rect.height
+                {
+                    xy_mut.0 += rect.x;
+                    xy_mut.1 += rect.y;
+                } else {
+                    state.maybe_xy = None;
+                }
+            }
+            state.crop = CropState::NoCrop;
+        }
     }
+    update_floodfill_display(state)?;
+    Ok(())
 }
 
 /// Displays a UI for assignment the stickers of a `PuzzleGeometry`
@@ -768,7 +762,7 @@ pub fn pixel_assignment_ui(
     // image: &DynamicImage,
     bytes: &Bytes,
 ) -> Result<Box<[Pixel]>, opencv::Error> {
-    let mut img = imgcodecs::imdecode(&&**bytes, IMREAD_COLOR)?;
+    let img = imgcodecs::imdecode(&&**bytes, IMREAD_COLOR)?;
 
     highgui::named_window(
         WINDOW_NAME,
@@ -777,27 +771,8 @@ pub fn pixel_assignment_ui(
 
     let w = img.cols();
     let h = img.rows();
-    dbg!(w, h);
-    let mut pixel_count = w * h;
-
-    if pixel_count > MAX_PIXEL_COUNT {
-        let scale = (f64::from(MAX_PIXEL_COUNT) / f64::from(pixel_count)).sqrt();
-        #[allow(clippy::cast_possible_truncation)]
-        let new_w = (f64::from(w) * scale).round() as i32;
-        #[allow(clippy::cast_possible_truncation)]
-        let new_h = (f64::from(h) * scale).round() as i32;
-        pixel_count = new_w * new_h;
-        let mut resized = Mat::default();
-        imgproc::resize(
-            &img,
-            &mut resized,
-            Size::new(new_w, new_h),
-            0.0,
-            0.0,
-            imgproc::INTER_AREA, // best for downscaling
-        )?;
-        img = resized;
-    }
+    leptos::logging::log!("Image dimensions: w={w} h={h}");
+    let pixel_count = w * h;
 
     let displayed_img = Mat::zeros(img.rows(), img.cols(), CV_8UC3)?.to_mat()?;
     let grayscale_mask = Mat::zeros(img.rows() + 2, img.cols() + 2, CV_8UC1)?.to_mat()?;
@@ -974,13 +949,13 @@ pub fn pixel_assignment_ui(
         update_floodfill_display(&mut state)?;
     }
 
-    let mut holding_s = false;
+    let mut holding_f = false;
     let mut holding_c = false;
     loop {
         const B: i32 = 98;
         const C: i32 = 99;
         const N: i32 = 110;
-        const S: i32 = 115;
+        const F: i32 = 102;
 
         {
             #[allow(clippy::missing_panics_doc)]
@@ -1022,31 +997,31 @@ pub fn pixel_assignment_ui(
             let mut state = state.lock().unwrap();
             match key {
                 C => {
-                    holding_s = false;
+                    holding_f = false;
                     if !holding_c {
-                        toggle_selecting_crop(&mut state);
+                        crop_action(&mut state)?;
                         holding_c = true;
                     }
                 }
                 N => {
-                    holding_s = false;
+                    holding_f = false;
                     holding_c = false;
                     submit_button_callback(&mut state)?;
                 }
                 B => {
-                    holding_s = false;
+                    holding_f = false;
                     holding_c = false;
                     back_button_callback(&mut state)?;
                 }
-                S => {
-                    if !holding_s {
+                F => {
+                    if !holding_f {
                         toggle_dragging(&mut state);
-                        holding_s = true;
+                        holding_f = true;
                     }
                     holding_c = false;
                 }
                 _ => {
-                    holding_s = false;
+                    holding_f = false;
                     holding_c = false;
                 }
             }

@@ -82,9 +82,9 @@ pub fn App() -> impl IntoView {
     let video_ref = NodeRef::<html::Video>::new();
     let canvas_ref = NodeRef::<html::Canvas>::new();
     let (overflowing, set_overflowing) = signal(true);
-    let (cv_available_tx, cv_available_rx) = tokio::sync::watch::channel(None::<CVProcessor>);
     let playing_barrier = OnceBarrier::new();
     let puzzle_geometry = puzzle("3x3");
+    let (cv_available_tx, cv_available_rx) = tokio::sync::watch::channel(None::<CVProcessor>);
 
     let take_picture_channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).unwrap();
     let take_picture_channel2 = take_picture_channel.clone();
@@ -156,10 +156,7 @@ pub fn App() -> impl IntoView {
                             let cv_processor = cv_available_rx.borrow();
                             let cv_processor = cv_processor.as_ref().unwrap();
                             let (permutation, confidence) = cv_processor.process_image(pixels);
-                            info!(
-                                "Processed {permutation} with confidence {:.1}%",
-                                confidence * 100.0
-                            );
+                            info!("Processed {permutation} with confidence {confidence:.1}");
                             take_picture_channel2
                                 .send_message(TakePictureMessage::PermutationResult(permutation))
                                 .unwrap();
@@ -253,7 +250,7 @@ pub fn App() -> impl IntoView {
           "QVIS"
         </button>
       </header>
-      <main class="flex flex-col gap-4 justify-center ml-4 mr-4 mt-5 mb-6 text-center">
+      <main class="flex flex-col gap-4 justify-center mt-5 mr-4 mb-6 ml-4 text-center">
         <Video video_ref canvas_ref pixel_assignment_action do_pixel_assignment use_user_media_return playing_barrier />
         "Messages:"
         <div class="relative h-72 font-mono text-left border-2 border-gray-300">
