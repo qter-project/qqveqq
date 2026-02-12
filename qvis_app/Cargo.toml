@@ -27,6 +27,7 @@ internment = { version = "0.8.6", features = ["arc"] }
 rand = "0.9.2"
 wasm-bindgen-futures = "0.4.58"
 gloo-timers = "0.3.0"
+serde_path_to_error = "0.1.20"
 
 [dependencies.leptos-use]
 git = "https://github.com/Synphonyte/leptos-use"
@@ -47,7 +48,8 @@ features = [
     "CanvasRenderingContext2d",
     "ImageData",
     "MediaDeviceKind",
-    "ConstrainDomStringParameters"
+    "ConstrainDomStringParameters",
+    "Window",
 ]
 
 [features]
@@ -64,7 +66,8 @@ ssr = [
     "leptos_ws/ssr",
     "leptos-use/ssr",
     "tokio/io-std",
-    "tokio/io-util"
+    "tokio/io-util",
+    "tokio/fs"
 ]
 
 [package.metadata.leptos]

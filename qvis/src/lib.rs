@@ -11,12 +11,40 @@ pub mod puzzle_matching;
 
 /// Processes images for computer vision
 #[derive(Deserialize)]
-#[serde(from = "(usize, Arc<PuzzleGeometry>, Inference)")]
+#[serde(from = "CVProcessorHelper")]
 pub struct CVProcessor {
-    image_size: usize,
+    pub image_size: usize,
     puzzle: Arc<PuzzleGeometry>,
     matcher: Matcher,
     inference: Inference,
+}
+
+#[derive(Serialize, Deserialize)]
+struct CVProcessorHelper {
+    image_size: usize,
+    puzzle: Arc<PuzzleGeometry>,
+    inference: Inference,
+}
+
+impl Clone for CVProcessor {
+    fn clone(&self) -> Self {
+        CVProcessor::from(CVProcessorHelper {
+            image_size: self.image_size,
+            puzzle: self.puzzle.clone(),
+            inference: self.inference.clone(),
+        })
+    }
+}
+
+impl std::fmt::Debug for CVProcessor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CVProcessor")
+            .field("image_size", &self.image_size)
+            .field("puzzle", &self.puzzle)
+            .field("matcher", &"Matcher { [not shown] }")
+            .field("inference", &self.inference)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -84,12 +112,17 @@ impl Serialize for CVProcessor {
             matcher: _,
             inference,
         } = self;
-        (&image_size, &puzzle, &inference).serialize(serializer)
+        // (&image_size, &puzzle, &inference).serialize(serializer)
+        CVProcessorHelper {
+            image_size: *image_size,
+            puzzle: puzzle.clone(),
+            inference: inference.clone(),
+        }.serialize(serializer)
     }
 }
 
-impl From<(usize, Arc<PuzzleGeometry>, Inference)> for CVProcessor {
-    fn from((image_size, puzzle, inference): (usize, Arc<PuzzleGeometry>, Inference)) -> Self {
+impl From<CVProcessorHelper> for CVProcessor {
+    fn from(CVProcessorHelper { image_size, puzzle, inference }: CVProcessorHelper) -> Self {
         CVProcessor {
             image_size,
             matcher: Matcher::new(&puzzle),

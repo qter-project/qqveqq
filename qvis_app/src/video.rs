@@ -4,7 +4,6 @@ use leptos_use::{
     use_event_listener_with_options,
 };
 use log::{info, warn};
-use qvis::Pixel;
 use send_wrapper::SendWrapper;
 use std::sync::{
     Arc,
@@ -61,7 +60,7 @@ async fn draw_video_on_canvas(
         .unwrap()
         .dyn_into::<web_sys::CanvasRenderingContext2d>()
         .unwrap();
-    if !video_enabled.get() {
+    if !video_enabled.get_untracked() {
         set_video_enabled.set(true);
     }
     playing_barrier.wait().await;
@@ -185,8 +184,6 @@ async fn all_camera_devices() -> Result<Vec<SendWrapper<web_sys::MediaDeviceInfo
 pub fn Video(
     video_ref: NodeRef<html::Video>,
     canvas_ref: NodeRef<html::Canvas>,
-    pixel_assignment_action: Action<web_sys::FormData, Result<Box<[Pixel]>, ServerFnError>>,
-    do_pixel_assignment: impl Fn() + 'static,
     use_user_media_return: UseUserMediaReturn<
         impl Fn() + Clone + Send + Sync,
         impl Fn() + Clone + Send + Sync,
@@ -332,22 +329,6 @@ pub fn Video(
           class="flex-1 min-w-0 border-2 border-white"
         />
         <canvas node_ref=canvas_ref class="flex-1 min-w-0 border-2 border-amber-300" />
-      </div>
-      // zoom
-      // resolution (width)
-      // camera device
-      <div class="flex h-12">
-        <button on:click=move |_| do_pixel_assignment() class="flex-1 border-2 border-white cursor-pointer">
-          {move || {
-            if pixel_assignment_action.pending().get() {
-              "Processing...".to_string()
-            } else {
-              "Pixel assignment".to_string()
-            }
-          }}
-        </button>
-        <button class="flex-1 border-2 border-white cursor-pointer">"Export CVProcessor"</button>
-        <button class="flex-1 border-2 border-white cursor-pointer">"Import CVProcessor"</button>
       </div>
       <select
         on:change:target=select_camera_device

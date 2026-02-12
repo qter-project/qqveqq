@@ -397,7 +397,7 @@ fn update_floodfill_display(state: &mut State) -> opencv::Result<()> {
             state.stickers_to_assign.get(state.assigning_sticker_idx)
         {
             format!(
-                "Choose {} on {}",
+                "{} {}",
                 assigning_sticker
                     .iter()
                     .map(std::string::ToString::to_string)
@@ -405,7 +405,7 @@ fn update_floodfill_display(state: &mut State) -> opencv::Result<()> {
                 assigning_face.color
             )
         } else {
-            format!("Choose white balance on {}", white_balance_face.color)
+            format!("{} WB", white_balance_face.color)
         };
         let mut display_instructions = |first: bool| -> Result<(), opencv::Error> {
             imgproc::put_text(
@@ -622,21 +622,21 @@ fn back_button_callback(state: &mut State) -> opencv::Result<()> {
     Ok(())
 }
 
-fn toggle_dragging(state: &mut State) {
-    if state.dragging {
-        state.dragging = false;
-    } else if let Some((x, y)) = state.maybe_xy {
-        if let Some((drag_x, drag_y)) = state.maybe_drag_xy {
-            let distance = f64::from(drag_x - x).hypot(f64::from(drag_y - y));
-            if distance > f64::from(state.xy_circle_radius()) {
-                state.maybe_drag_origin = Some((x, y));
-            }
-        } else {
+fn start_dragging_action(state: &mut State) -> opencv::Result<()> {
+    let Some((x, y)) = state.maybe_xy else {
+        return Ok(());
+    };
+    if let Some((drag_x, drag_y)) = state.maybe_drag_xy {
+        let distance = f64::from(drag_x - x).hypot(f64::from(drag_y - y));
+        if distance > f64::from(state.xy_circle_radius()) {
             state.maybe_drag_origin = Some((x, y));
         }
-        state.maybe_drag_xy = Some((x, y));
-        state.dragging = true;
+    } else {
+        state.maybe_drag_origin = Some((x, y));
     }
+    state.maybe_drag_xy = Some((x, y));
+    update_floodfill_display(state)?;
+    Ok(())
 }
 
 fn crop_action(state: &mut State) -> opencv::Result<()> {
@@ -703,6 +703,7 @@ fn crop_action(state: &mut State) -> opencv::Result<()> {
             }
 
             state.crop = CropState::Crop((rect, cropped_image));
+            update_floodfill_display(state)?;
         }
         CropState::Crop((rect, _)) => {
             state.displayed_img =
@@ -746,9 +747,9 @@ fn crop_action(state: &mut State) -> opencv::Result<()> {
                 }
             }
             state.crop = CropState::NoCrop;
+            update_floodfill_display(state)?;
         }
     }
-    update_floodfill_display(state)?;
     Ok(())
 }
 
@@ -759,7 +760,6 @@ fn crop_action(state: &mut State) -> opencv::Result<()> {
 /// This function will return an `OpenCV` error.
 pub fn pixel_assignment_ui(
     puzzle_geometry: &PuzzleGeometry,
-    // image: &DynamicImage,
     bytes: &Bytes,
 ) -> Result<Box<[Pixel]>, opencv::Error> {
     let img = imgcodecs::imdecode(&&**bytes, IMREAD_COLOR)?;
@@ -998,6 +998,7 @@ pub fn pixel_assignment_ui(
             match key {
                 C => {
                     holding_f = false;
+                    state.dragging = false;
                     if !holding_c {
                         crop_action(&mut state)?;
                         holding_c = true;
@@ -1006,16 +1007,23 @@ pub fn pixel_assignment_ui(
                 N => {
                     holding_f = false;
                     holding_c = false;
+                    state.dragging = false;
                     submit_button_callback(&mut state)?;
                 }
                 B => {
                     holding_f = false;
                     holding_c = false;
+                    state.dragging = false;
                     back_button_callback(&mut state)?;
                 }
                 F => {
                     if !holding_f {
-                        toggle_dragging(&mut state);
+                        if state.dragging {
+                            state.dragging = false;
+                        } else {
+                            state.dragging = true;
+                            start_dragging_action(&mut state)?;
+                        }
                         holding_f = true;
                     }
                     holding_c = false;

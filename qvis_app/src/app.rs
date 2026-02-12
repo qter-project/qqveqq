@@ -1,3 +1,5 @@
+#![allow(clippy::similar_names, clippy::unused_async)]
+
 use crate::{
     messages_logger::MessagesLogger,
     video::{OnceBarrier, Video, pixel_assignment_command, take_picture_command},
@@ -83,7 +85,7 @@ pub fn App() -> impl IntoView {
     let canvas_ref = NodeRef::<html::Canvas>::new();
     let (overflowing, set_overflowing) = signal(true);
     let playing_barrier = OnceBarrier::new();
-    let puzzle_geometry = puzzle("3x3");
+    let cube3 = puzzle("3x3");
     let (cv_available_tx, cv_available_rx) = tokio::sync::watch::channel(None::<CVProcessor>);
 
     let take_picture_channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).unwrap();
@@ -120,6 +122,7 @@ pub fn App() -> impl IntoView {
     };
     {
         let cv_available_tx = cv_available_tx.clone();
+        let cv_available_rx = cv_available_rx.clone();
         let playing_barrier = Arc::clone(&playing_barrier);
         let do_pixel_assignment = do_pixel_assignment.clone();
         take_picture_channel
@@ -197,6 +200,8 @@ pub fn App() -> impl IntoView {
             .unwrap();
     }
 
+    let cv_available_tx2 = cv_available_tx.clone();
+    let cube3_2 = Arc::clone(&cube3);
     Effect::new(move |_| {
         let pixel_assignment = pixel_assignment_action.value().get();
         let Some(pixel_assignment) = pixel_assignment else {
@@ -216,11 +221,11 @@ pub fn App() -> impl IntoView {
         info!("Assigned {}/{} pixels", assigned, pixel_assignment.len());
 
         let cv_processor = CVProcessor::new(
-            Arc::clone(&puzzle_geometry),
+            Arc::clone(&cube3_2),
             pixel_assignment.len(),
             pixel_assignment,
         );
-        cv_available_tx.send_modify(|maybe_cv_processor| {
+        cv_available_tx2.send_modify(|maybe_cv_processor| {
             *maybe_cv_processor = Some(cv_processor);
         });
     });
@@ -239,6 +244,78 @@ pub fn App() -> impl IntoView {
         false,
     );
 
+    let cv_available_rx2 = cv_available_rx.clone();
+    let do_export_cv_processor = move |_| {
+        let export_file_name = match web_sys::window().unwrap().prompt_with_message_and_default(
+            "Enter file name for CVProcessor export",
+            "cv_processor_export.json",
+        ) {
+            Ok(Some(export_file_name)) if !export_file_name.trim().is_empty() => export_file_name,
+            Ok(Some(_)) => {
+                warn!("Export cancelled: file name is empty");
+                return;
+            }
+            Ok(None) => {
+                warn!("Export cancelled: user cancelled dialog");
+                return;
+            }
+            Err(err) => {
+                warn!("Export cancelled: prompt failed: {err:?}");
+                return;
+            }
+        };
+        let cv_available_rx2 = cv_available_rx2.borrow();
+        let Some(cv_processor2) = cv_available_rx2.as_ref().cloned() else {
+            warn!("Export failed: CVProcessor not yet available");
+            return;
+        };
+
+        let cv_processor2 = leptos::serde_json::to_string(&cv_processor2).unwrap();
+        spawn_local(async move {
+            if let Err(err) = export_cv_processor(cv_processor2, export_file_name.clone()).await {
+                warn!("Failed to export CVProcessor: {err}");
+            } else {
+                info!("Successfully exported CVProcessor to {export_file_name}");
+            }
+        });
+    };
+
+    let do_import_cv_processor = move |_| {
+        let export_file_name = match web_sys::window().unwrap().prompt_with_message_and_default(
+            "Enter file name for CVProcessor import",
+            "cv_processor_export.json",
+        ) {
+            Ok(Some(export_file_name)) if !export_file_name.trim().is_empty() => export_file_name,
+            Ok(Some(_)) => {
+                warn!("Import cancelled: file name is empty");
+                return;
+            }
+            Ok(None) => {
+                warn!("Import cancelled: user cancelled dialog");
+                return;
+            }
+            Err(err) => {
+                warn!("Import cancelled: prompt failed: {err:?}");
+                return;
+            }
+        };
+
+        let cv_available_tx = cv_available_tx.clone();
+        spawn_local(async move {
+            match import_cv_processor(export_file_name.clone()).await {
+                Ok(cv_processor) => {
+                    cv_available_tx.send_modify(|maybe_cv_processor| {
+                        *maybe_cv_processor = Some(cv_processor);
+                    });
+                    info!("Successfully imported CVProcessor from {export_file_name}");
+                }
+                Err(err) => {
+                    warn!("Failed to import CVProcessor: {err}");
+                }
+            }
+        });
+    };
+
     view! {
       <header class="font-sans text-4xl font-bold tracking-wider text-center bg-[rgb(47,48,80)] leading-20">
         <button
@@ -251,7 +328,27 @@ pub fn App() -> impl IntoView {
         </button>
       </header>
       <main class="flex flex-col gap-4 justify-center mt-5 mr-4 mb-6 ml-4 text-center">
-        <Video video_ref canvas_ref pixel_assignment_action do_pixel_assignment use_user_media_return playing_barrier />
+        <Video video_ref canvas_ref use_user_media_return playing_barrier />
+        // zoom
+        // resolution (width)
+        // camera device
+        <div class="flex h-12">
+          <button on:click=move |_| do_pixel_assignment() class="flex-1 border-2 border-white cursor-pointer">
+            {move || {
+              if pixel_assignment_action.pending().get() {
+                "Processing...".to_string()
+              } else {
+                "Pixel assignment".to_string()
+              }
+            }}
+          </button>
+          <button class="flex-1 border-2 border-white cursor-pointer" on:click=do_export_cv_processor>
+            "Export CVProcessor"
+          </button>
+          <button class="flex-1 border-2 border-white cursor-pointer" on:click=do_import_cv_processor>
+            "Import CVProcessor"
+          </button>
+        </div>
         "Messages:"
         <div class="relative h-72 font-mono text-left border-2 border-gray-300">
           <div
@@ -273,10 +370,32 @@ pub fn App() -> impl IntoView {
     }
 }
 
+#[server]
+async fn export_cv_processor(
+    cv_processor: String,
+    export_file_name: String,
+) -> Result<(), ServerFnError> {
+    let cv_processor: CVProcessor = leptos::serde_json::from_str(&cv_processor)?;
+    let export_path = std::env::current_dir().unwrap().join(&export_file_name);
+    let export_file = std::fs::File::create(export_path)?;
+    leptos::serde_json::to_writer(export_file, &cv_processor)?;
+    leptos::logging::log!("Exported CVProcessor to {export_file_name}");
+    Ok(())
+}
+
+#[server]
+async fn import_cv_processor(import_file_name: String) -> Result<CVProcessor, ServerFnError> {
+    let import_path = std::env::current_dir().unwrap().join(&import_file_name);
+    let import_file = std::fs::File::open(import_path)?;
+    let cv_processor = leptos::serde_json::from_reader(import_file)?;
+    leptos::logging::log!("Imported CVProcessor from {import_file_name}");
+    Ok(cv_processor)
+}
+
 #[server(
-  input = MultipartFormData,
+    input = MultipartFormData,
 )]
-pub async fn pixel_assignment(data: MultipartData) -> Result<Box<[Pixel]>, ServerFnError> {
+async fn pixel_assignment(data: MultipartData) -> Result<Box<[Pixel]>, ServerFnError> {
     let mut data = data.into_inner().unwrap();
     let field = data
         .next_field()
