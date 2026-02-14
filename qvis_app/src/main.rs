@@ -125,7 +125,7 @@ async fn robot_tui(server_signals: &mut WsSignals) {
                 .await
                 .map(|v| {
                     let (p, c) = v.unwrap();
-                    format!("{p}; {:.2}%", c * 100.)
+                    format!("{p} {:.2}", c * 100.)
                 })
                 .unwrap_or_else(|e| e.to_string());
             stdout
