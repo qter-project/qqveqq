@@ -36,10 +36,12 @@ args = ["reverse-proxy", "--from", "10.42.0.1", "--to", ":3000"]
 [tasks.kill-caddy]
 command = "pkill"
 args = ["caddy"]
+ignore_errors = true
 
 [tasks.kill-qvis-app]
 command = "pkill"
 args = ["qvis_app"]
+ignore_errors = true
 
 [config]
 unstable_features = ["CTRL_C_HANDLING"]
