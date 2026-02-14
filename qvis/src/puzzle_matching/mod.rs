@@ -28,7 +28,7 @@ impl Matcher {
         let orbits = data
             .orbits()
             .iter()
-            .map(|orbit| OrbitMatcher::new(&puzzle, orbit))
+            .map(|orbit| OrbitMatcher::new(puzzle, orbit))
             .collect();
 
         Matcher {

@@ -55,19 +55,6 @@ impl Pixel {
             Some((color, Self::density(kdtree, at)?))
         })
     }
-
-    fn max_densities(&self) -> impl Iterator<Item = (&ArcIntern<str>, f64)> {
-        self.kdtrees.iter().map(|(color, kdtree)| {
-            (
-                color,
-                kdtree
-                    .iter()
-                    .flat_map(|(_, at)| Pixel::density(kdtree, at.into()))
-                    .max_by(|a, b| a.total_cmp(b))
-                    .unwrap_or(0.),
-            )
-        })
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -179,6 +166,9 @@ impl Inference {
 
         let wb = self.white_balance(picture);
 
+        let facelet_count_adjust = self.pixels_by_sticker.len() as f64;
+        let no_data = (self.colors.len() as f64 * facelet_count_adjust).recip();
+
         self.pixels_by_sticker
             .iter()
             .enumerate()
@@ -193,13 +183,29 @@ impl Inference {
                     confidences_by_pixel.get_mut(color).unwrap().push(density)
                 }
 
-                confidences_by_pixel
+                let items = confidences_by_pixel
                     .iter_mut()
                     .map(|(k, v)| {
                         let confidence = representative_confidence(v, &mut rng);
                         v.drain(..);
                         (ArcIntern::clone(k), confidence)
                     })
+                    .collect::<Vec<_>>();
+
+                let mut normalization = items.iter().filter_map(|v| v.1).sum::<f64>();
+
+                let len = items.len() as f64;
+                normalization *= len;
+                normalization /= items.iter().filter(|v| v.1.is_some()).count() as f64;
+
+                normalization *= facelet_count_adjust;
+
+                items
+                    .into_iter()
+                    .map(|(k, v)| (k, match v {
+                        Some(v) => v / normalization,
+                        None => no_data,
+                    }))
                     .collect()
             })
             .collect()
@@ -225,50 +231,16 @@ impl Inference {
             }
         }
     }
-
-    // TODO: Maybe make this work? The problem is that it's possible for the estimated density to approach infinity meaning there is no maximum.
-    // pub fn max_confidence(&self) -> f64 {
-    //     *self.max_confidence.get_or_init(|| {
-    //         let mut rng = rand::rng();
-
-    //         let mut confidences_by_pixel = self
-    //             .colors
-    //             .iter()
-    //             .cloned()
-    //             .map(|v| (v, Vec::<f64>::new()))
-    //             .collect::<HashMap<_, _>>();
-
-    //         self.pixels_by_sticker
-    //             .iter()
-    //             .map(|v| {
-    //                 // Maybe pick random subset
-    //                 for (color, density) in v.iter().flat_map(|pixel| pixel.max_densities()) {
-    //                     confidences_by_pixel.get_mut(color).unwrap().push(density)
-    //                 }
-
-    //                 confidences_by_pixel
-    //                     .iter_mut()
-    //                     .map(|(_, v)| {
-    //                         let confidence = representative_confidence(v, &mut rng);
-    //                         v.drain(..);
-    //                         confidence
-    //                     })
-    //                     .max_by(|a, b| a.total_cmp(b))
-    //                     .unwrap_or(0.)
-    //             })
-    //             .sum()
-    //     })
-    // }
 }
 
-fn representative_confidence<R: Rng + ?Sized>(confidences: &mut [f64], rng: &mut R) -> f64 {
+fn representative_confidence<R: Rng + ?Sized>(confidences: &mut [f64], rng: &mut R) -> Option<f64> {
     if confidences.is_empty() {
-        return 0.;
+        return None;
     }
 
     let n = (CONFIDENCE_PERCENTILE * confidences.len() as f64).floor() as usize;
     quickselect(rng, confidences, f64::total_cmp, n);
-    confidences[n]
+    Some(confidences[n])
 }
 
 // This quickselect code is copied from <https://gitlab.com/hrovnyak/nmr-schedule>
@@ -449,7 +421,11 @@ mod tests {
         for _ in 0..100 {
             let perm = stabchain.random(&mut rng);
             simulate_picture(&perm, &group, 0.2, 0.1, &mut rng, &mut img);
-            let (perm_inferred, _) = matcher.most_likely(&inference.infer(&img, &group), &puzzle);
+            let inference = inference.infer(&img, &group);
+            let (perm_inferred, conf) = matcher.most_likely(&inference, &puzzle);
+            println!("{inference:#?}");
+            assert!(0. <= conf, "{conf}");
+            assert!(conf <= 1., "{conf}");
             assert_eq!(perm_inferred, perm);
         }
     }
