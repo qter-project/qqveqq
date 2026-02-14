@@ -64,12 +64,18 @@ pub fn App() -> impl IntoView {
         let context = expect_context::<leptos_ws::ServerSignalWebSocket>();
         context.set_on_connect(move || {
             info!("Established connection with server");
+            spawn_local(async move {
+                print_ready().await.unwrap();
+            });
         });
         context.set_on_disconnect(move || {
             warn!("Lost connection with server; trying reconnect");
         });
         context.set_on_reconnect(move || {
             info!("Re-established connection with server");
+            spawn_local(async move {
+                print_ready().await.unwrap();
+            });
         });
     }
 
@@ -162,7 +168,10 @@ pub fn App() -> impl IntoView {
                             let (permutation, confidence) = cv_processor.process_image(&pixels);
                             info!("Processed {permutation} with confidence {confidence:.1}");
                             take_picture_channel
-                                .send_message(TakePictureMessage::PermutationResult(permutation, confidence))
+                                .send_message(TakePictureMessage::PermutationResult(
+                                    permutation,
+                                    confidence,
+                                ))
                                 .unwrap();
                         });
                     }
@@ -365,6 +374,12 @@ pub fn App() -> impl IntoView {
         </div>
       </main>
     }
+}
+
+#[server]
+async fn print_ready() -> Result<(), ServerFnError> {
+    leptos::logging::log!("READY");
+    Ok(())
 }
 
 #[server]

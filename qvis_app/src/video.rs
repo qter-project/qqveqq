@@ -284,49 +284,49 @@ pub fn Video(
         });
     });
 
-    let camera_devices =
-        LocalResource::new(move || async move { all_camera_devices().await.unwrap() });
-    let camera_device =
-        LocalResource::new(move || async move { camera_devices.await.first().cloned() });
+    // let camera_devices =
+    //     LocalResource::new(move || async move { all_camera_devices().await.unwrap() });
+    // let camera_device =
+    //     LocalResource::new(move || async move { camera_devices.await.first().cloned() });
 
-    let select_camera_device = move |ev: Targeted<web_sys::Event, web_sys::HtmlSelectElement>| {
-        let v = ev.target().value();
-        let selected_camera_device = camera_devices
-            .get()
-            .unwrap()
-            .iter()
-            .find(|d| d.device_id() == v)
-            .cloned();
-        *camera_device.write() = Some(selected_camera_device);
+    // let select_camera_device = move |ev: Targeted<web_sys::Event, web_sys::HtmlSelectElement>| {
+    //     let v = ev.target().value();
+    //     let selected_camera_device = camera_devices
+    //         .get()
+    //         .unwrap()
+    //         .iter()
+    //         .find(|d| d.device_id() == v)
+    //         .cloned();
+    //     *camera_device.write() = Some(selected_camera_device);
 
-        let a = web_sys::MediaTrackConstraints::default();
+    //     let a = web_sys::MediaTrackConstraints::default();
 
-        let b = web_sys::ConstrainDomStringParameters::default();
-        b.set_ideal(&JsValue::from_str("environment"));
-        a.set_facing_mode(&b);
+    //     let b = web_sys::ConstrainDomStringParameters::default();
+    //     b.set_ideal(&JsValue::from_str("environment"));
+    //     a.set_facing_mode(&b);
 
-        let b = web_sys::ConstrainDomStringParameters::default();
-        b.set_exact(&JsValue::from_str(&v));
-        a.set_device_id(&b);
+    //     let b = web_sys::ConstrainDomStringParameters::default();
+    //     b.set_exact(&JsValue::from_str(&v));
+    //     a.set_device_id(&b);
 
-        let c = web_sys::MediaStreamConstraints::default();
-        c.set_video(&a);
+    //     let c = web_sys::MediaStreamConstraints::default();
+    //     c.set_video(&a);
 
-        spawn_local(async move {
-            if let Some(device) = stream.get_untracked() {
-                for track in device.unwrap().get_tracks() {
-                    wasm_bindgen_futures::JsFuture::from(
-                        track
-                            .unchecked_ref::<web_sys::MediaStreamTrack>()
-                            .apply_constraints_with_constraints(c.unchecked_ref())
-                            .unwrap(),
-                    )
-                    .await
-                    .unwrap();
-                }
-            }
-        });
-    };
+    //     spawn_local(async move {
+    //         if let Some(device) = stream.get_untracked() {
+    //             for track in device.unwrap().get_tracks() {
+    //                 wasm_bindgen_futures::JsFuture::from(
+    //                     track
+    //                         .unchecked_ref::<web_sys::MediaStreamTrack>()
+    //                         .apply_constraints_with_constraints(c.unchecked_ref())
+    //                         .unwrap(),
+    //                 )
+    //                 .await
+    //                 .unwrap();
+    //             }
+    //         }
+    //     });
+    // };
 
     #[cfg(feature = "hydrate")]
     {
@@ -414,35 +414,35 @@ pub fn Video(
         </div>
         <canvas node_ref=canvas_ref class="flex-1 min-w-0 border-2 border-amber-300" />
       </div>
-      <select
-        on:change:target=select_camera_device
-        prop:value=move || camera_device.get().flatten().map(|d| d.device_id()).unwrap_or_default()
-        class="cursor-pointer"
-      >
-        <Suspense fallback=move || {
-          view! { <option>"Loading..."</option> }
-        }>
-          {move || Suspend::new(async move {
-            view! {
-              {camera_devices
-                .await
-                .iter()
-                .map(|device| {
-                  view! {
-                    <option value=device
-                      .device_id()>
-                      {if device.label().is_empty() {
-                        format!("Unidentified: {}", device.device_id())
-                      } else {
-                        device.label()
-                      }}
-                    </option>
-                  }
-                })
-                .collect::<Vec<_>>()}
-            }
-          })}
-        </Suspense>
-      </select>
     }
+    // <select
+    //   on:change:target=select_camera_device
+    //   prop:value=move || camera_device.get().flatten().map(|d| d.device_id()).unwrap_or_default()
+    //   class="cursor-pointer"
+    // >
+    //   <Suspense fallback=move || {
+    //     view! { <option>"Loading..."</option> }
+    //   }>
+    //     {move || Suspend::new(async move {
+    //       view! {
+    //         {camera_devices
+    //           .await
+    //           .iter()
+    //           .map(|device| {
+    //             view! {
+    //               <option value=device
+    //                 .device_id()>
+    //                 {if device.label().is_empty() {
+    //                   format!("Unidentified: {}", device.device_id())
+    //                 } else {
+    //                   device.label()
+    //                 }}
+    //               </option>
+    //             }
+    //           })
+    //           .collect::<Vec<_>>()}
+    //       }
+    //     })}
+    //   </Suspense>
+    // </select>
 }
