@@ -83,13 +83,13 @@ pub fn App() -> impl IntoView {
     let messages_container = NodeRef::<leptos::html::Div>::new();
     let video_ref = NodeRef::<html::Video>::new();
     let canvas_ref = NodeRef::<html::Canvas>::new();
+    let cv_overlay_ref: NodeRef<html::Canvas> = NodeRef::new();
     let (overflowing, set_overflowing) = signal(true);
     let playing_barrier = OnceBarrier::new();
     let cube3 = puzzle("3x3");
     let (cv_available_tx, cv_available_rx) = tokio::sync::watch::channel(None::<CVProcessor>);
 
     let take_picture_channel = ChannelSignal::new(TAKE_PICTURE_CHANNEL).unwrap();
-    let take_picture_channel2 = take_picture_channel.clone();
 
     let pixel_assignment_action =
         Action::new_local(|data: &web_sys::FormData| pixel_assignment(data.clone().into()));
@@ -126,12 +126,13 @@ pub fn App() -> impl IntoView {
         let playing_barrier = Arc::clone(&playing_barrier);
         let do_pixel_assignment = do_pixel_assignment.clone();
         take_picture_channel
+            .clone()
             .on_client(move |msg: &TakePictureMessage| {
                 let video_ref = video_ref.get_untracked().unwrap();
                 let canvas_ref = canvas_ref.get_untracked().unwrap();
                 info!("Received message {msg:?}");
 
-                let take_picture_channel2 = take_picture_channel2.clone();
+                let take_picture_channel = take_picture_channel.clone();
                 let mut cv_available_rx = cv_available_rx.clone();
                 let cv_available_tx = cv_available_tx.clone();
                 let UseUserMediaReturn {
@@ -152,15 +153,15 @@ pub fn App() -> impl IntoView {
                                 &playing_barrier,
                             )
                             .await;
-                            if cv_available_rx.borrow().is_none() {
+                            if cv_available_rx.borrow_and_update().is_none() {
                                 do_pixel_assignment();
                                 cv_available_rx.changed().await.unwrap();
                             }
-                            let cv_processor = cv_available_rx.borrow();
+                            let cv_processor = cv_available_rx.borrow_and_update();
                             let cv_processor = cv_processor.as_ref().unwrap();
                             let (permutation, confidence) = cv_processor.process_image(&pixels);
                             info!("Processed {permutation} with confidence {confidence:.1}");
-                            take_picture_channel2
+                            take_picture_channel
                                 .send_message(TakePictureMessage::PermutationResult(permutation, confidence))
                                 .unwrap();
                         });
@@ -186,7 +187,7 @@ pub fn App() -> impl IntoView {
                                 let cv_processor = maybe_cv_processor.as_mut().unwrap();
                                 cv_processor.calibrate(&pixels, &permutation);
                             });
-                            take_picture_channel2
+                            take_picture_channel
                                 .send_message(TakePictureMessage::Calibrated)
                                 .unwrap();
                         });
@@ -200,35 +201,31 @@ pub fn App() -> impl IntoView {
             .unwrap();
     }
 
-    let cv_available_tx2 = cv_available_tx.clone();
-    let cube3_2 = Arc::clone(&cube3);
-    Effect::new(move |_| {
-        let pixel_assignment = pixel_assignment_action.value().get();
-        let Some(pixel_assignment) = pixel_assignment else {
-            return;
-        };
-        let pixel_assignment = match pixel_assignment {
-            Ok(pixels) => pixels,
-            Err(err) => {
-                warn!("Pixel assignment failed: {err}");
+    {
+        let cv_available_tx = cv_available_tx.clone();
+        let cube3 = Arc::clone(&cube3);
+        Effect::new(move |_| {
+            let pixel_assignment = pixel_assignment_action.value().get();
+            let Some(pixel_assignment) = pixel_assignment else {
                 return;
-            }
-        };
-        let assigned = pixel_assignment
-            .iter()
-            .filter(|p| !matches!(p, Pixel::Unassigned))
-            .count();
-        info!("Assigned {}/{} pixels", assigned, pixel_assignment.len());
+            };
+            let pixel_assignment = match pixel_assignment {
+                Ok(pixels) => pixels,
+                Err(err) => {
+                    warn!("Pixel assignment failed: {err}");
+                    return;
+                }
+            };
 
-        let cv_processor = CVProcessor::new(
-            Arc::clone(&cube3_2),
-            pixel_assignment.len(),
-            pixel_assignment,
-        );
-        cv_available_tx2.send_modify(|maybe_cv_processor| {
-            *maybe_cv_processor = Some(cv_processor);
+            let cv_processor =
+                CVProcessor::new(Arc::clone(&cube3), pixel_assignment.len(), pixel_assignment);
+
+            info!("0");
+            cv_available_tx.send_modify(|maybe_cv_processor| {
+                *maybe_cv_processor = Some(cv_processor);
+            });
         });
-    });
+    }
 
     Effect::watch(
         move || messages.get(),
@@ -328,7 +325,7 @@ pub fn App() -> impl IntoView {
         </button>
       </header>
       <main class="flex flex-col gap-4 justify-center mt-5 mr-4 mb-6 ml-4 text-center">
-        <Video video_ref canvas_ref use_user_media_return playing_barrier />
+        <Video video_ref canvas_ref cv_overlay_ref use_user_media_return playing_barrier cv_available_rx />
         // zoom
         // resolution (width)
         // camera device

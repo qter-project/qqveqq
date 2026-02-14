@@ -23,8 +23,8 @@ fn white_balance(mut color: (f64, f64, f64), neutral: (f64, f64, f64)) -> (f64, 
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Pixel {
-    idx: usize,
+pub(crate) struct Pixel {
+    pub(crate) idx: usize,
     kdtrees: HashMap<ArcIntern<str>, KdTree<f64, 3>>,
 }
 
@@ -59,8 +59,8 @@ impl Pixel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Inference {
-    pixels_by_sticker: Box<[Box<[Pixel]>]>,
-    white_balance_by_face: HashMap<ArcIntern<str>, Box<[usize]>>,
+    pub(crate) pixels_by_sticker: Box<[Box<[Pixel]>]>,
+    pub(crate) white_balance_by_face: HashMap<ArcIntern<str>, Box<[usize]>>,
     colors: Box<[ArcIntern<str>]>,
     #[serde(skip)]
     max_confidence: OnceLock<f64>,

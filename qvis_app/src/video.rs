@@ -1,16 +1,14 @@
 use leptos::{ev::Targeted, html, prelude::*};
-use leptos_use::{
-    UseEventListenerOptions, UseUserMediaReturn, use_event_listener,
-    use_event_listener_with_options,
-};
+use leptos_use::{UseUserMediaReturn, use_event_listener};
 use log::{info, warn};
+use qvis::CVProcessor;
 use send_wrapper::SendWrapper;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
-use tokio::sync::Notify;
-use wasm_bindgen::{JsCast, JsValue, prelude::Closure};
+use tokio::sync::{Notify, watch::Receiver};
+use wasm_bindgen::{Clamped, JsCast, JsValue, prelude::Closure};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::js_sys;
 
@@ -184,11 +182,13 @@ async fn all_camera_devices() -> Result<Vec<SendWrapper<web_sys::MediaDeviceInfo
 pub fn Video(
     video_ref: NodeRef<html::Video>,
     canvas_ref: NodeRef<html::Canvas>,
+    cv_overlay_ref: NodeRef<html::Canvas>,
     use_user_media_return: UseUserMediaReturn<
         impl Fn() + Clone + Send + Sync,
         impl Fn() + Clone + Send + Sync,
     >,
     playing_barrier: Arc<OnceBarrier>,
+    mut cv_available_rx: Receiver<Option<CVProcessor>>,
 ) -> impl IntoView {
     let UseUserMediaReturn {
         stream,
@@ -224,24 +224,27 @@ pub fn Video(
         video_ref.set_src_object(maybe_stream);
     });
 
-    let value = playing_barrier.clone();
-    let toggle_enabled = move |_| {
-        set_enabled.update(|e| {
-            if *e {
-                value.set_unready();
-                *e = false;
-            } else {
-                *e = true;
-            }
-        });
+    let toggle_enabled = {
+        let playing_barrier = playing_barrier.clone();
+        move |_| {
+            set_enabled.update(|e| {
+                if *e {
+                    playing_barrier.set_unready();
+                    *e = false;
+                } else {
+                    *e = true;
+                }
+            });
+        }
     };
 
-    let _ = use_event_listener_with_options(
-        video_ref,
-        leptos::ev::loadedmetadata,
-        move |_| {
+    let a = Arc::new(Notify::new());
+    {
+        let a = Arc::clone(&a);
+        let _ = use_event_listener(video_ref, leptos::ev::loadedmetadata, move |_| {
             let video_ref = video_ref.get().unwrap();
             let canvas_ref = canvas_ref.get().unwrap();
+            let cv_overlay_ref = cv_overlay_ref.get().unwrap();
 
             let video_width = f64::from(video_ref.video_width());
             let video_height = f64::from(video_ref.video_height());
@@ -262,13 +265,20 @@ pub fn Video(
             video_ref
                 .set_attribute("height", &height.to_string())
                 .unwrap();
-        },
-        UseEventListenerOptions::default().once(true),
-    );
+            cv_overlay_ref
+                .set_attribute("width", &WIDTH.to_string())
+                .unwrap();
+            cv_overlay_ref
+                .set_attribute("height", &height.to_string())
+                .unwrap();
+            a.notify_one();
+        });
+    }
 
     let _ = use_event_listener(video_ref, leptos::ev::playing, move |_| {
         let playing_barrier = Arc::clone(&playing_barrier);
         spawn_local(async move {
+            // let the camera exposure stabilize
             gloo_timers::future::TimeoutFuture::new(1000).await;
             playing_barrier.set_ready();
         });
@@ -318,16 +328,90 @@ pub fn Video(
         });
     };
 
+    #[cfg(feature = "hydrate")]
+    {
+        let a = Arc::clone(&a);
+        spawn_local(async move {
+            a.notified().await;
+            loop {
+                info!("1");
+                if cv_available_rx.changed().await.is_err() {
+                    break;
+                }
+                info!("2");
+                let Some(cv_processor) = &*cv_available_rx.borrow_and_update() else {
+                    continue;
+                };
+                info!("3");
+                let pixel_assignment = cv_processor.pixel_assignment_locations();
+                let mut overlay_data = vec![0u8; 4 * pixel_assignment.len()];
+                let mut assigned_pixels_count = 0;
+                for overlay_pixel_mut in overlay_data
+                    .chunks_exact_mut(4)
+                    .zip(pixel_assignment.iter())
+                    .filter_map(|(overlay_pixel_mut, &assigned_pixel)| {
+                        if assigned_pixel {
+                            Some(overlay_pixel_mut)
+                        } else {
+                            None
+                        }
+                    })
+                {
+                    assigned_pixels_count += 1;
+                    overlay_pixel_mut[0] = 255;
+                    overlay_pixel_mut[1] = 0;
+                    overlay_pixel_mut[2] = 255;
+                    overlay_pixel_mut[3] = 255;
+                }
+                info!(
+                    "Assigned {}/{} pixels",
+                    assigned_pixels_count,
+                    pixel_assignment.len()
+                );
+                let cv_overlay_ref = cv_overlay_ref.get_untracked().unwrap();
+                let overlay_height = cv_overlay_ref.height();
+                let overlay_width = cv_overlay_ref.width();
+                assert_eq!(
+                    overlay_height as usize * overlay_width as usize,
+                    pixel_assignment.len()
+                );
+
+                let opts = js_sys::Object::new();
+                js_sys::Reflect::set(&opts, &"willReadFrequently".into(), &true.into()).unwrap();
+                js_sys::Reflect::set(&opts, &"alpha".into(), &true.into()).unwrap();
+                let overlay_image_data = web_sys::ImageData::new_with_u8_clamped_array_and_sh(
+                    Clamped(&overlay_data),
+                    overlay_width,
+                    overlay_height,
+                )
+                .unwrap();
+                let ctx = cv_overlay_ref
+                    .get_context_with_context_options("2d", &opts)
+                    .unwrap()
+                    .unwrap()
+                    .dyn_into::<web_sys::CanvasRenderingContext2d>()
+                    .unwrap();
+                ctx.put_image_data(&overlay_image_data, 0.0, 0.0).unwrap();
+            }
+        });
+    }
+
     view! {
       <div class="flex gap-4 justify-around">
-        <video
-          node_ref=video_ref
-          on:click=toggle_enabled
-          controls=false
-          autoplay=true
-          muted=true
-          class="flex-1 min-w-0 border-2 border-white"
-        />
+        <div class="relative flex-1 min-w-0 border-2">
+          <video
+            node_ref=video_ref
+            on:click=toggle_enabled
+            controls=false
+            autoplay=true
+            muted=true
+            class="w-full h-full border-white"
+          />
+          <canvas
+            node_ref=cv_overlay_ref
+            class="absolute top-0 left-0 w-full h-full pointer-events-none [image-rendering:pixelated]"
+          />
+        </div>
         <canvas node_ref=canvas_ref class="flex-1 min-w-0 border-2 border-amber-300" />
       </div>
       <select

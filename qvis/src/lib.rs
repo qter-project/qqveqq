@@ -13,7 +13,7 @@ pub mod puzzle_matching;
 #[derive(Deserialize)]
 #[serde(from = "CVProcessorHelper")]
 pub struct CVProcessor {
-    pub image_size: usize,
+    image_size: usize,
     puzzle: Arc<PuzzleGeometry>,
     matcher: Matcher,
     inference: Inference,
@@ -98,6 +98,18 @@ impl CVProcessor {
                 .infer(image, &self.puzzle.permutation_group()),
             &self.puzzle,
         )
+    }
+
+    /// Get the locations of pixels that are assigned to something, either a sticker or white balance. This is useful for debugging and visualization.
+    pub fn pixel_assignment_locations(&self) -> Box<[bool]> {
+        let mut ret = vec![false; self.image_size].into_boxed_slice();
+        for pixel in self.inference.pixels_by_sticker.iter().flatten() {
+            ret[pixel.idx] = true;
+        }
+        for &idx in self.inference.white_balance_by_face.values().flatten() {
+            ret[idx] = true;
+        }
+        ret
     }
 }
 
