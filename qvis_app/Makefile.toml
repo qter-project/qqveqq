@@ -15,6 +15,7 @@ LDFLAGS="-L/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk/usr/lib"
 LD_LIBRARY_PATH="/usr/local/lib"
 
 [tasks.dev-caddy]
+dependencies = ["kill-caddy"]
 command = "caddy"
 args = ["reverse-proxy", "--to", ":3000"]
 
@@ -26,8 +27,13 @@ command = "cargo"
 args = ["leptos", "serve"]
 
 [tasks.prod-caddy]
+dependencies = ["kill-caddy"]
 command = "caddy"
 args = ["reverse-proxy", "--from", "10.42.0.1", "--to", ":3000"]
+
+[tasks.kill-caddy]
+command = "pkill"
+args = ["caddy"]
 
 [config]
 unstable_features = ["CTRL_C_HANDLING"]
