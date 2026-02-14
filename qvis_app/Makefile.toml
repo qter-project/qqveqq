@@ -6,6 +6,7 @@ LEPTOS_WASM_OPT_VERSION="version_125"
 run_task = { name = ["dev-server-mac", "dev-caddy"], parallel = true }
 
 [tasks.dev-server-mac]
+dependencies = ["kill-qvis-app"]
 command = "cargo"
 args = ["leptos", "watch"]
 
@@ -23,6 +24,7 @@ args = ["reverse-proxy", "--to", ":3000"]
 run_task = { name = ["prod-server", "prod-caddy"], parallel = true }
 
 [tasks.prod-server]
+dependencies = ["kill-qvis-app"]
 command = "cargo"
 args = ["leptos", "serve"]
 
@@ -34,6 +36,10 @@ args = ["reverse-proxy", "--from", "10.42.0.1", "--to", ":3000"]
 [tasks.kill-caddy]
 command = "pkill"
 args = ["caddy"]
+
+[tasks.kill-qvis-app]
+command = "pkill"
+args = ["qvis_app"]
 
 [config]
 unstable_features = ["CTRL_C_HANDLING"]
