@@ -91,11 +91,11 @@ impl CVProcessor {
     }
 
     /// Process an image and return the most likely state that the puzzle appears to be in, along with the confidence in the prediction. This is guaranteed to be a valid member of the group.
-    pub fn process_image(&self, image: Box<[(f64, f64, f64)]>) -> (Permutation, f64) {
+    pub fn process_image(&self, image: &[(f64, f64, f64)]) -> (Permutation, f64) {
         self.matcher.most_likely(
             &self
                 .inference
-                .infer(&image, &self.puzzle.permutation_group()),
+                .infer(image, &self.puzzle.permutation_group()),
             &self.puzzle,
         )
     }

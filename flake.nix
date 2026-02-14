@@ -33,18 +33,30 @@
             "rust-src"
             "rust-analyzer"
           ];
+          targets = [
+            "wasm32-unknown-unknown"
+          ];
         };
+
+        libraries = with pkgs; [
+          libclang
+          opencv
+          boost
+        ];
+
       in
       {
         devShell = pkgs.mkShell rec {
           buildInputs =
-            (with pkgs; [
+            libraries ++ (with pkgs; [
               sccache
               rust-analyzer
               rust
               pkg-config
               qter.packages."${system}".shiroa
             ]);
+
+          stdenv = pkgs.llvmPackages_15.stdenv;
 
           RUST_BACKTRACE = 1;
           RUSTC_WRAPPER = "sccache";

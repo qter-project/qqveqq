@@ -123,7 +123,10 @@ async fn robot_tui(server_signals: &mut WsSignals) {
         if line.starts_with("TAKE_PICTURE") {
             let done_string = take_picture(server_signals, None)
                 .await
-                .map(|p| p.unwrap().to_string())
+                .map(|v| {
+                    let (p, c) = v.unwrap();
+                    format!("{p}; {:.2}%", c * 100.)
+                })
                 .unwrap_or_else(|e| e.to_string());
             stdout
                 .write_all(format!("DONE {done_string}\n").as_bytes())
@@ -156,7 +159,7 @@ async fn robot_tui(server_signals: &mut WsSignals) {
 async fn take_picture(
     server_signals: &mut WsSignals,
     calibration_permutation: Option<Permutation>,
-) -> Result<Option<Permutation>, ServerFnError> {
+) -> Result<Option<(Permutation, f64)>, ServerFnError> {
     let channel = ChannelSignal::new_with_context(server_signals, TAKE_PICTURE_CHANNEL)
         .map_err(ServerFnError::new)?;
 
@@ -168,8 +171,8 @@ async fn take_picture(
             info!("Received message {message:#?}");
             if let Some(response_tx) = response_tx.lock().unwrap().take() {
                 match message {
-                    TakePictureMessage::PermutationResult(permutation) => {
-                        response_tx.send(Some(permutation.clone())).unwrap();
+                    TakePictureMessage::PermutationResult(permutation, confidence) => {
+                        response_tx.send(Some((permutation.clone(), *confidence))).unwrap();
                     }
                     TakePictureMessage::Calibrated => {
                         response_tx.send(None).unwrap();

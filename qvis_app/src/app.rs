@@ -26,7 +26,7 @@ pub enum TakePictureMessage {
     TakePicture,
     Calibrate(Permutation),
     // Response
-    PermutationResult(Permutation),
+    PermutationResult(Permutation, f64),
     Calibrated,
 }
 
@@ -158,10 +158,10 @@ pub fn App() -> impl IntoView {
                             }
                             let cv_processor = cv_available_rx.borrow();
                             let cv_processor = cv_processor.as_ref().unwrap();
-                            let (permutation, confidence) = cv_processor.process_image(pixels);
+                            let (permutation, confidence) = cv_processor.process_image(&pixels);
                             info!("Processed {permutation} with confidence {confidence:.1}");
                             take_picture_channel2
-                                .send_message(TakePictureMessage::PermutationResult(permutation))
+                                .send_message(TakePictureMessage::PermutationResult(permutation, confidence))
                                 .unwrap();
                         });
                     }
@@ -191,7 +191,7 @@ pub fn App() -> impl IntoView {
                                 .unwrap();
                         });
                     }
-                    m @ (TakePictureMessage::PermutationResult(_)
+                    m @ (TakePictureMessage::PermutationResult(_, _)
                     | TakePictureMessage::Calibrated) => {
                         warn!("Received {m:?} on client, which should not happen");
                     }

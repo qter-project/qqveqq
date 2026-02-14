@@ -423,7 +423,6 @@ mod tests {
             simulate_picture(&perm, &group, 0.2, 0.1, &mut rng, &mut img);
             let inference = inference.infer(&img, &group);
             let (perm_inferred, conf) = matcher.most_likely(&inference, &puzzle);
-            println!("{inference:#?}");
             assert!(0. <= conf, "{conf}");
             assert!(conf <= 1., "{conf}");
             assert_eq!(perm_inferred, perm);
