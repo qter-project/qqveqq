@@ -16,7 +16,7 @@ LD_LIBRARY_PATH="/usr/local/lib"
 
 [tasks.dev-caddy]
 command = "caddy"
-args = ["reverse-proxy", "--from", "10.42.0.215", "--to", ":3000"]
+args = ["reverse-proxy", "--to", ":3000"]
 
 [tasks.prod]
 run_task = { name = ["prod-server", "prod-caddy"], parallel = true }
