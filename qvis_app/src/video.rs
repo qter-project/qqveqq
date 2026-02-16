@@ -1,8 +1,7 @@
-use leptos::{ev::Targeted, html, prelude::*};
+use leptos::{html, prelude::*};
 use leptos_use::{UseUserMediaReturn, use_event_listener};
 use log::{info, warn};
 use qvis::CVProcessor;
-use send_wrapper::SendWrapper;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -155,28 +154,28 @@ pub(crate) async fn pixel_assignment_command(
     blob.dyn_into::<web_sys::Blob>().unwrap()
 }
 
-async fn all_camera_devices() -> Result<Vec<SendWrapper<web_sys::MediaDeviceInfo>>, JsValue> {
-    let media_devices = web_sys::window()
-        .ok_or_else(|| JsValue::from_str("Failed to access window"))?
-        .navigator()
-        .media_devices()?;
+// async fn all_camera_devices() -> Result<Vec<SendWrapper<web_sys::MediaDeviceInfo>>, JsValue> {
+//     let media_devices = web_sys::window()
+//         .ok_or_else(|| JsValue::from_str("Failed to access window"))?
+//         .navigator()
+//         .media_devices()?;
 
-    let devices_promise = media_devices.enumerate_devices()?;
-    let devices_js = JsFuture::from(devices_promise).await?;
-    let devices_array = js_sys::Array::from(&devices_js);
+//     let devices_promise = media_devices.enumerate_devices()?;
+//     let devices_js = JsFuture::from(devices_promise).await?;
+//     let devices_array = js_sys::Array::from(&devices_js);
 
-    Ok(devices_array
-        .iter()
-        .filter_map(|device_js| {
-            let device_info: web_sys::MediaDeviceInfo = device_js.dyn_into().ok()?;
-            if device_info.kind() == web_sys::MediaDeviceKind::Videoinput {
-                Some(SendWrapper::new(device_info))
-            } else {
-                None
-            }
-        })
-        .collect())
-}
+//     Ok(devices_array
+//         .iter()
+//         .filter_map(|device_js| {
+//             let device_info: web_sys::MediaDeviceInfo = device_js.dyn_into().ok()?;
+//             if device_info.kind() == web_sys::MediaDeviceKind::Videoinput {
+//                 Some(SendWrapper::new(device_info))
+//             } else {
+//                 None
+//             }
+//         })
+//         .collect())
+// }
 
 #[component]
 pub fn Video(

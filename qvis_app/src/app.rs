@@ -4,7 +4,6 @@ use crate::{
     messages_logger::MessagesLogger,
     video::{OnceBarrier, Video, pixel_assignment_command, take_picture_command},
 };
-use bytes::Bytes;
 use leptos::{html, prelude::*, task::spawn_local};
 use leptos_use::{
     ConstraintExactIdeal, FacingMode, UseUserMediaOptions, UseUserMediaReturn,
@@ -166,7 +165,7 @@ pub fn App() -> impl IntoView {
                             let cv_processor = cv_available_rx.borrow_and_update();
                             let cv_processor = cv_processor.as_ref().unwrap();
                             let (permutation, confidence) = cv_processor.process_image(&pixels);
-                            info!("Processed {permutation} with confidence {confidence:.1}");
+                            info!("Processed {permutation} with confidence {:.2}", confidence * 100.);
                             take_picture_channel
                                 .send_message(TakePictureMessage::PermutationResult(
                                     permutation,
@@ -417,7 +416,7 @@ async fn pixel_assignment(data: MultipartData) -> Result<Box<[Pixel]>, ServerFnE
     let bytes = field.bytes().await?;
 
     let pixel_assignment_ui_tx = use_context::<
-        std::sync::mpsc::Sender<(tokio::sync::oneshot::Sender<Box<[Pixel]>>, Bytes)>,
+        std::sync::mpsc::Sender<(tokio::sync::oneshot::Sender<Box<[Pixel]>>, bytes::Bytes)>,
     >()
     .unwrap();
     let (pixel_assignment_done_tx, pixel_assignment_done_rx) = tokio::sync::oneshot::channel();
